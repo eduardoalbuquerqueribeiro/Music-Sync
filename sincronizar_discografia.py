@@ -11,10 +11,11 @@ from ytmusicapi import YTMusic
 import yt_dlp
 
 # =====================================================================
-# ARQUIVOS DE CONFIGURAÇÃO LOCAL (Ignorados pelo Git)
+# CONFIGURAÇÕES
 # =====================================================================
 
 PASTA_SCRIPT = Path(__file__).parent
+ARQUIVO_COOKIES = PASTA_SCRIPT / "cookies.txt"
 ARQUIVO_CONFIG_LOCAL = PASTA_SCRIPT / ".config_local.json"
 
 EXTENSOES_AUDIO = {".mp3", ".flac", ".m4a", ".ogg", ".opus", ".wav", ".wma"}
@@ -31,10 +32,7 @@ def carregar_config_local() -> dict:
 
 
 def salvar_config_local(caminho_musicas: str, navegador: str):
-    dados = {
-        "caminho_musicas": caminho_musicas,
-        "navegador_cookies": navegador
-    }
+    dados = {"caminho_musicas": caminho_musicas, "navegador_cookies": navegador}
     try:
         with open(ARQUIVO_CONFIG_LOCAL, "w", encoding="utf-8") as f:
             json.dump(dados, f, indent=2, ensure_ascii=False)
@@ -43,73 +41,28 @@ def salvar_config_local(caminho_musicas: str, navegador: str):
 
 
 def escolher_navegador(navegador_salvo: str) -> str:
-    opcoes = {
-        "1": "chrome",
-        "2": "firefox",
-        "3": "safari",
-        "4": "brave",
-        "5": "edge",
-        "6": "chromium",
-        "7": "nenhum"
-    }
-
     print("\n🌐 AUTENTICAÇÃO DO YOUTUBE")
-    print("   [1] Google Chrome")
-    print("   [2] Mozilla Firefox")
-    print("   [3] Apple Safari")
-    print("   [4] Brave Browser")
-    print("   [5] Microsoft Edge")
-    print("   [6] Chromium")
-    print("   [7] Nenhum (Sem login)")
-
-    if navegador_salvo:
-        escolha = input(f"\nEscolha [1-7] ou [ENTER] para manter '{navegador_salvo}': ").strip().lower()
-        if not escolha:
-            return navegador_salvo
-    else:
-        escolha = input("\nEscolha [1-7] (Padrão: 1 - Chrome): ").strip().lower()
-        if not escolha:
-            return "chrome"
-
-    if escolha in opcoes:
-        return opcoes[escolha]
-    if escolha in opcoes.values():
-        return escolha
-    return "chrome"
+    print("   [1] Google Chrome / Brave / Chromium (Via cookies.txt na pasta)")
+    print("   [2] Sem navegador (Usar clientes públicos do yt-dlp)")
+    
+    escolha = input("\nEscolha [1-2] (Padrão: 1): ").strip()
+    return "chrome" if escolha != "2" else "nenhum"
 
 
 def obter_config_cookies_navegador(navegador: str) -> tuple | None:
+    if ARQUIVO_COOKIES.exists():
+        return None  # Se houver cookies.txt, o yt-dlp lê via cookiefile nativo
     if not navegador or navegador == "nenhum":
         return None
 
     if sys.platform.startswith("linux"):
         home = Path.home()
         caminhos_linux = {
-            "chrome": (
-                home / ".config/google-chrome",
-                home / ".var/app/com.google.Chrome/config/google-chrome"
-            ),
-            "firefox": (
-                home / ".mozilla/firefox",
-                home / ".var/app/org.mozilla.firefox/.mozilla/firefox"
-            ),
-            "brave": (
-                home / ".config/BraveSoftware/Brave-Browser",
-                home / ".var/app/com.brave.Browser/config/BraveSoftware/Brave-Browser"
-            ),
-            "edge": (
-                home / ".config/microsoft-edge",
-                home / ".var/app/com.microsoft.Edge/config/microsoft-edge"
-            ),
-            "chromium": (
-                home / ".config/chromium",
-                home / ".var/app/org.chromium.Chromium/config/chromium"
-            ),
+            "chrome": (home / ".config/google-chrome", home / ".var/app/com.google.Chrome/config/google-chrome"),
         }
-        if navegador in caminhos_linux:
-            nativo, flatpak = caminhos_linux[navegador]
-            if not nativo.exists() and flatpak.exists():
-                return (navegador, str(flatpak))
+        nativo, flatpak = caminhos_linux.get(navegador, (None, None))
+        if nativo and not nativo.exists() and flatpak and flatpak.exists():
+            return (navegador, str(flatpak))
 
     return (navegador,)
 
@@ -118,24 +71,9 @@ def verificar_armazenamento(caminho_alvo: Path) -> bool:
     print("\n" + "=" * 60)
     print("🔍 DIAGNÓSTICO DE ARMAZENAMENTO")
     print("=" * 60)
-    caminho_str = str(caminho_alvo)
-
-    if os.name != "nt":
-        prefixos_externos = ("/run/media/", "/media/", "/mnt/")
-        eh_externo = caminho_str.startswith(prefixos_externos)
-        ponto_montagem = None
-        for parent in [caminho_alvo] + list(caminho_alvo.parents):
-            if parent.exists() and os.path.ismount(parent):
-                ponto_montagem = parent
-                break
-        if eh_externo and not (ponto_montagem and str(ponto_montagem).startswith(prefixos_externos)):
-            print("🔌 Status do disco: ❌ DESMONTADO OU DESCONECTADO")
-            return False
-
     if not caminho_alvo.exists():
         print(f"📁 Pasta de música: ❌ A pasta '{caminho_alvo}' não existe.")
         return False
-
     print(f"📁 Pasta de música: ✅ Encontrada ({caminho_alvo})")
     print("=" * 60 + "\n")
     return True
@@ -151,7 +89,7 @@ def normalizar_para_comparacao(texto: str, remover_numeros_faixa: bool = False) 
     if remover_numeros_faixa:
         texto = re.sub(r'^\s*(\d+[\-\.\s_]+)+', '', texto)
     texto = re.sub(r'[\(\[\-\s]*(19\d{2}|20\d{2})[\)\]\-\s]*', ' ', texto)
-    termos = ['deluxe edition', 'deluxe version', 'deluxe', 'remastered', 'remaster', 'expanded edition', 'special edition']
+    termos = ['deluxe edition', 'deluxe version', 'deluxe', 'remastered', 'remaster', 'expanded edition']
     for t in termos:
         texto = re.sub(rf'[\(\[\-\s]*{t}[\)\]\-\s]*', ' ', texto)
     return re.sub(r'\s+', ' ', re.sub(r'[^a-z0-9\s]', ' ', texto)).strip()
@@ -240,8 +178,7 @@ def montar_opcoes_ytdlp(
     idx: int,
     total_faixas: int,
     ano_album: str,
-    navegador_escolhido: str,
-    usar_cookies: bool = True
+    navegador_escolhido: str
 ) -> dict:
     ydl_opts = {
         'format': 'bestaudio/best',
@@ -253,8 +190,8 @@ def montar_opcoes_ytdlp(
         'writethumbnail': True,
         'sleep_interval': 1,
         'max_sleep_interval': 3,
-        # Usa o cliente android + web para bypassar o bloqueio de bot do YouTube
-        'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+        # Usa clientes alternativos do yt-dlp para contornar assinaturas bot
+        'extractor_args': {'youtube': {'player_client': ['ios', 'web']}},
         'postprocessors': [
             {'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '320'},
             {'key': 'EmbedThumbnail'},
@@ -268,10 +205,15 @@ def montar_opcoes_ytdlp(
         ],
     }
 
-    if usar_cookies:
+    if ARQUIVO_COOKIES.exists():
+        ydl_opts['cookiefile'] = str(ARQUIVO_COOKIES)
+    else:
         tupla_nav = obter_config_cookies_navegador(navegador_escolhido)
         if tupla_nav:
-            ydl_opts['cookiesfrombrowser'] = tupla_nav
+            try:
+                ydl_opts['cookiesfrombrowser'] = tupla_nav
+            except Exception:
+                pass
 
     return ydl_opts
 
@@ -314,27 +256,16 @@ def baixar_album(ytmusic: YTMusic, album_resumo: dict, pasta_album: Path, nome_a
             continue
 
         nome_arq = sanitizar_nome_sistema(f"{idx:02d} - {titulo_faixa}")
-        mp3_final = pasta_album / f"{nome_arq}.mp3"
         caminho_saida = pasta_album / f"{nome_arq}.%(ext)s"
         url = f"https://music.youtube.com/watch?v={video_id}"
         print(f"      [↓] Baixando: {nome_arq}...")
 
-        # Tentativa 1: Com cookies do navegador escolhido
-        ydl_opts = montar_opcoes_ytdlp(caminho_saida, arquivo_historico, nome_artista, titulo_album, idx, len(faixas), ano_album, navegador_escolhido, usar_cookies=True)
+        ydl_opts = montar_opcoes_ytdlp(caminho_saida, arquivo_historico, nome_artista, titulo_album, idx, len(faixas), ano_album, navegador_escolhido)
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
         except Exception:
             pass
-
-        # Tentativa 2: Sem cookies (fallback limpo usando o cliente android)
-        if not mp3_final.exists():
-            ydl_opts_no_cookie = montar_opcoes_ytdlp(caminho_saida, arquivo_historico, nome_artista, titulo_album, idx, len(faixas), ano_album, navegador_escolhido, usar_cookies=False)
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts_no_cookie) as ydl:
-                    ydl.download([url])
-            except Exception:
-                pass
 
 
 def varrer_biblioteca(caminho_raiz: Path, navegador_escolhido: str):
@@ -374,7 +305,7 @@ def varrer_biblioteca(caminho_raiz: Path, navegador_escolhido: str):
 
 
 if __name__ == "__main__":
-    print("=== Sincronizador v3.3 (Bypass de Bot & Player Client Android) ===")
+    print("=== Sincronizador v3.4 (iOS/Web Bypass & Cookies File Support) ===")
     config = carregar_config_local()
     nav = escolher_navegador(config.get("navegador_cookies", ""))
     caminho = config.get("caminho_musicas", "") or input("\nCaminho da pasta de músicas: ").strip()
