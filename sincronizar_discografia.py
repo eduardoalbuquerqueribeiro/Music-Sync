@@ -7,7 +7,6 @@ import unicodedata
 from pathlib import Path
 
 PASTA_SCRIPT = Path(__file__).parent
-ARQUIVO_COOKIES = PASTA_SCRIPT / "cookies.txt"
 ARQUIVO_CONFIG_LOCAL = PASTA_SCRIPT / ".config_local.json"
 EXTENSOES_AUDIO = {".mp3", ".flac", ".m4a", ".ogg", ".opus", ".wav", ".wma"}
 
@@ -63,14 +62,11 @@ def baixar_faixa_cli(termo_busca: str, caminho_saida: Path, arquivo_historico: P
         "--add-metadata",
         "--force-ipv4",
         "--no-playlist",
-        # Força o cliente Android para evitar bloqueios de assinatura de player do YouTube
+        # Usa o player android sem conflito de cookies de desktop
         "--extractor-args", "youtube:player_client=android",
         "--output", str(caminho_saida),
         "--download-archive", str(arquivo_historico),
     ]
-
-    if ARQUIVO_COOKIES.exists():
-        cmd.extend(["--cookies", str(ARQUIVO_COOKIES)])
 
     cmd.extend([
         "--metadata-from-title", "%(artist)s - %(title)s",
@@ -92,7 +88,7 @@ def varrer_biblioteca(caminho_raiz: Path):
     total_artistas = len(pastas_artistas)
     total_albuns_geral = sum(len([p for p in art.iterdir() if p.is_dir() and not p.name.startswith('.')]) for art in pastas_artistas)
     
-    print(f"=== Sincronizador v3.1 (Android Client Bypass Enabled) ===")
+    print(f"=== Sincronizador v3.2 (Cookie-Free Android Engine) ===")
     print(f"📊 Total encontrado: {total_artistas} artistas | {total_albuns_geral} álbuns/pastas.\n")
 
     album_contador = 0
@@ -119,7 +115,6 @@ def varrer_biblioteca(caminho_raiz: Path):
             print(f"  [{album_contador}/{total_albuns_geral}] 📥 Baixando faltando em: {titulo_album} ({len(arquivos_locais)} arquivos locais)")
             arquivo_historico = pasta_album / ".downloaded.txt"
 
-            # Busca mais precisa focada em áudio oficial
             termo_busca = f"ytsearch5:{nome_artista} {titulo_album} audio"
             caminho_saida = pasta_album / "%(autonumber)s - %(title)s.%(ext)s"
             baixar_faixa_cli(termo_busca, caminho_saida, arquivo_historico, nome_artista, titulo_album)
