@@ -15,7 +15,6 @@ import yt_dlp
 # =====================================================================
 
 PASTA_SCRIPT = Path(__file__).parent
-ARQUIVO_COOKIES = PASTA_SCRIPT / "cookies.txt"
 ARQUIVO_CONFIG_LOCAL = PASTA_SCRIPT / ".config_local.json"
 
 EXTENSOES_AUDIO = {".mp3", ".flac", ".m4a", ".ogg", ".opus", ".wav", ".wma"}
@@ -61,7 +60,7 @@ def escolher_navegador(navegador_salvo: str) -> str:
     print("   [4] Brave Browser")
     print("   [5] Microsoft Edge")
     print("   [6] Chromium")
-    print("   [7] Nenhum / cookies.txt")
+    print("   [7] Nenhum (Sem login)")
 
     if navegador_salvo:
         escolha = input(f"\nEscolha [1-7] ou [ENTER] para manter '{navegador_salvo}': ").strip().lower()
@@ -245,7 +244,7 @@ def montar_opcoes_ytdlp(
     usar_cookies: bool = True
 ) -> dict:
     ydl_opts = {
-        'format': 'bestaudio[ext=m4a]/bestaudio/best',
+        'format': 'bestaudio/best',
         'outtmpl': str(caminho_saida),
         'download_archive': str(arquivo_historico),
         'quiet': True,
@@ -254,7 +253,8 @@ def montar_opcoes_ytdlp(
         'writethumbnail': True,
         'sleep_interval': 1,
         'max_sleep_interval': 3,
-        'extractor_args': {'youtube': {'player_client': ['web']}},
+        # Usa o cliente android + web para bypassar o bloqueio de bot do YouTube
+        'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
         'postprocessors': [
             {'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '320'},
             {'key': 'EmbedThumbnail'},
@@ -269,12 +269,9 @@ def montar_opcoes_ytdlp(
     }
 
     if usar_cookies:
-        if ARQUIVO_COOKIES.exists():
-            ydl_opts['cookiefile'] = str(ARQUIVO_COOKIES)
-        else:
-            tupla_nav = obter_config_cookies_navegador(navegador_escolhido)
-            if tupla_nav:
-                ydl_opts['cookiesfrombrowser'] = tupla_nav
+        tupla_nav = obter_config_cookies_navegador(navegador_escolhido)
+        if tupla_nav:
+            ydl_opts['cookiesfrombrowser'] = tupla_nav
 
     return ydl_opts
 
@@ -322,7 +319,7 @@ def baixar_album(ytmusic: YTMusic, album_resumo: dict, pasta_album: Path, nome_a
         url = f"https://music.youtube.com/watch?v={video_id}"
         print(f"      [↓] Baixando: {nome_arq}...")
 
-        # Tentativa 1: Download direto com cookies e cliente web
+        # Tentativa 1: Com cookies do navegador escolhido
         ydl_opts = montar_opcoes_ytdlp(caminho_saida, arquivo_historico, nome_artista, titulo_album, idx, len(faixas), ano_album, navegador_escolhido, usar_cookies=True)
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -330,7 +327,7 @@ def baixar_album(ytmusic: YTMusic, album_resumo: dict, pasta_album: Path, nome_a
         except Exception:
             pass
 
-        # Tentativa 2: Fallback limpo sem cookies se falhar
+        # Tentativa 2: Sem cookies (fallback limpo usando o cliente android)
         if not mp3_final.exists():
             ydl_opts_no_cookie = montar_opcoes_ytdlp(caminho_saida, arquivo_historico, nome_artista, titulo_album, idx, len(faixas), ano_album, navegador_escolhido, usar_cookies=False)
             try:
@@ -377,7 +374,7 @@ def varrer_biblioteca(caminho_raiz: Path, navegador_escolhido: str):
 
 
 if __name__ == "__main__":
-    print("=== Sincronizador v3.2 (Correção de Formato & Web Client) ===")
+    print("=== Sincronizador v3.3 (Bypass de Bot & Player Client Android) ===")
     config = carregar_config_local()
     nav = escolher_navegador(config.get("navegador_cookies", ""))
     caminho = config.get("caminho_musicas", "") or input("\nCaminho da pasta de músicas: ").strip()
