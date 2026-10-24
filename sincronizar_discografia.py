@@ -22,7 +22,6 @@ EXTENSOES_AUDIO = {".mp3", ".flac", ".m4a", ".ogg", ".opus", ".wav", ".wma"}
 
 
 def carregar_config_local() -> dict:
-    """Carrega o caminho e o navegador salvos localmente no PC do usuário."""
     if ARQUIVO_CONFIG_LOCAL.exists():
         try:
             with open(ARQUIVO_CONFIG_LOCAL, "r", encoding="utf-8") as f:
@@ -33,7 +32,6 @@ def carregar_config_local() -> dict:
 
 
 def salvar_config_local(caminho_musicas: str, navegador: str):
-    """Salva as preferências localmente (não sobe para o GitHub)."""
     dados = {
         "caminho_musicas": caminho_musicas,
         "navegador_cookies": navegador
@@ -46,7 +44,6 @@ def salvar_config_local(caminho_musicas: str, navegador: str):
 
 
 def escolher_navegador(navegador_salvo: str) -> str:
-    """Pergunta ao usuário em qual navegador ele está logado no YouTube."""
     opcoes = {
         "1": "chrome",
         "2": "firefox",
@@ -81,12 +78,10 @@ def escolher_navegador(navegador_salvo: str) -> str:
     if escolha in opcoes.values():
         return escolha
 
-    print("   [!] Opção inválida. Usando 'chrome' como padrão.")
     return "chrome"
 
 
 def obter_config_cookies_navegador(navegador: str) -> tuple | None:
-    """Detecta instalações nativas ou via Flatpak no Linux."""
     if not navegador or navegador == "nenhum":
         return None
 
@@ -123,7 +118,6 @@ def obter_config_cookies_navegador(navegador: str) -> tuple | None:
 
 
 def verificar_armazenamento(caminho_alvo: Path) -> bool:
-    """Detecta se o caminho fica em HD Externo ou Disco Local e se está montado."""
     print("\n" + "=" * 60)
     print("🔍 DIAGNÓSTICO DE ARMAZENAMENTO")
     print("=" * 60)
@@ -133,53 +127,25 @@ def verificar_armazenamento(caminho_alvo: Path) -> bool:
     if os.name == "nt":
         drive = caminho_alvo.drive
         if not drive:
-            print("[❌] Caminho inválido no Windows (sem letra de unidade, ex: C:\\ ou D:\\).")
             return False
-
         raiz_drive = f"{drive}\\"
-        tipo_drive = ctypes.windll.kernel32.GetDriveTypeW(raiz_drive)
         montado = Path(raiz_drive).exists()
-
-        if tipo_drive == 2 or (tipo_drive == 3 and drive.upper() != "C:"):
-            tipo_desc = f"HD Externo / Partição Secundária ({drive})"
-        elif tipo_drive == 4:
-            tipo_desc = f"Unidade de Rede ({drive})"
-        else:
-            tipo_desc = f"Disco Principal do Sistema ({drive})"
-
-        print(f"💾 Tipo detectado : {tipo_desc}")
         if not montado:
-            print(f"🔌 Status do disco: ❌ DESCONECTADO / NÃO MONTADO ({drive} não encontrado)")
-            print("=" * 60 + "\n")
             return False
-
-        print(f"🔌 Status do disco: ✅ CONECTADO E MONTADO ({raiz_drive})")
     else:
         prefixos_externos = ("/run/media/", "/media/", "/mnt/")
         eh_externo = caminho_str.startswith(prefixos_externos)
-
         ponto_montagem = None
         for parent in [caminho_alvo] + list(caminho_alvo.parents):
             if parent.exists() and os.path.ismount(parent):
                 ponto_montagem = parent
                 break
-
-        if eh_externo:
-            print("💾 Tipo detectado : HD Externo / Partição Removível")
-            if ponto_montagem and str(ponto_montagem).startswith(prefixos_externos):
-                print(f"🔌 Status do disco: ✅ MONTADO (Ponto de montagem: {ponto_montagem})")
-            else:
-                print("🔌 Status do disco: ❌ DESMONTADO OU DESCONECTADO")
-                print("💡 Dica: Abra o gerenciador de arquivos e clique no HD para montá-lo.")
-                print("=" * 60 + "\n")
-                return False
-        else:
-            print(f"💾 Tipo detectado : Disco Interno / Sistema (Montado em: {ponto_montagem or '/'})")
-            print("🔌 Status do disco: ✅ MONTADO")
+        if eh_externo and not (ponto_montagem and str(ponto_montagem).startswith(prefixos_externos)):
+            print("🔌 Status do disco: ❌ DESMONTADO OU DESCONECTADO")
+            return False
 
     if not caminho_alvo.exists():
-        print(f"📁 Pasta de música: ❌ A pasta '{caminho_alvo}' não existe dentro deste disco.")
-        print("=" * 60 + "\n")
+        print(f"📁 Pasta de música: ❌ A pasta '{caminho_alvo}' não existe.")
         return False
 
     print(f"📁 Pasta de música: ✅ Encontrada ({caminho_alvo})")
@@ -197,7 +163,6 @@ def normalizar_para_comparacao(texto: str, remover_numeros_faixa: bool = False) 
     texto = ''.join(c for c in texto if not unicodedata.combining(c)).lower()
 
     if remover_numeros_faixa:
-        # Remove numeração de faixa no início (ex: "01 - ", "01.", "1-02 ")
         texto = re.sub(r'^\s*(\d+[\-\.\s_]+)+', '', texto)
 
     texto = re.sub(r'[\(\[\-\s]*(19\d{2}|20\d{2})[\)\]\-\s]*', ' ', texto)
@@ -241,12 +206,7 @@ def encontrar_pasta_album_local(
 
 
 def faixa_ja_existe_na_pasta(titulo_faixa: str, idx: int, arquivos_audio_locais: list[Path]) -> bool:
-    """
-    Verifica se a música já existe na pasta do álbum mesmo que esteja com outro padrão de nome
-    (ex: 'The Bird of Prey.mp3', '01. The Bird of Prey.flac', '01 - The Bird of Prey.mp3').
-    """
     alvo_norm = normalizar_para_comparacao(titulo_faixa, remover_numeros_faixa=True)
-    prefixo_num = f"{idx:02d}"
 
     for arq in arquivos_audio_locais:
         nome_sem_ext = arq.stem
@@ -255,19 +215,15 @@ def faixa_ja_existe_na_pasta(titulo_faixa: str, idx: int, arquivos_audio_locais:
         if not arq_norm:
             continue
 
-        # 1. Nome da faixa bate exatamente após limpar numeração e símbolos
         if alvo_norm and alvo_norm == arq_norm:
             return True
 
-        # 2. Nome da faixa está contido no arquivo (ex: arquivo tem 'feat. X' ou nome da banda)
         if len(alvo_norm) >= 4 and (alvo_norm in arq_norm or arq_norm in alvo_norm):
             return True
 
-        # 3. Similaridade alta (>= 82%)
         if alvo_norm and SequenceMatcher(None, alvo_norm, arq_norm).ratio() >= 0.82:
             return True
 
-        # 4. Começa com o mesmo número de faixa (ex: '01 - ...') e tem alguma semelhança
         if re.match(rf'^0?{idx}[\s\.\-_]', nome_sem_ext) and SequenceMatcher(None, alvo_norm, arq_norm).ratio() >= 0.55:
             return True
 
@@ -275,18 +231,14 @@ def faixa_ja_existe_na_pasta(titulo_faixa: str, idx: int, arquivos_audio_locais:
 
 
 def melhorar_url_thumbnail(url: str) -> str:
-    """Converte a URL da miniatura do YouTube Music para alta resolução (1000x1000)."""
     if not url:
         return ""
     return re.sub(r'=w\d+-h\d+.*$', '=w1000-h1000-l90-rj', url)
 
 
 def baixar_imagem(thumbnails: list[dict], destino: Path, descricao: str):
-    """Baixa a capa do álbum ou foto do artista caso ainda não exista na pasta."""
     if destino.exists() or not thumbnails:
         return
-
-    # Pega a última thumbnail da lista (sempre a de maior resolução)
     melhor_thumb = thumbnails[-1].get("url", "")
     url_alta_res = melhorar_url_thumbnail(melhor_thumb)
     if not url_alta_res:
@@ -294,26 +246,15 @@ def baixar_imagem(thumbnails: list[dict], destino: Path, descricao: str):
 
     try:
         destino.parent.mkdir(parents=True, exist_ok=True)
-        req = urllib.request.Request(
-            url_alta_res,
-            headers={'User-Agent': 'Mozilla/5.0'}
-        )
+        req = urllib.request.Request(url_alta_res, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=15) as resp, open(destino, 'wb') as out_file:
             out_file.write(resp.read())
         print(f"  [🖼️] {descricao} salva em: '{destino.name}'")
     except Exception:
-        # Se falhar na URL modificada, tenta a URL original
-        try:
-            req = urllib.request.Request(melhor_thumb, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=15) as resp, open(destino, 'wb') as out_file:
-                out_file.write(resp.read())
-            print(f"  [🖼️] {descricao} salva em: '{destino.name}'")
-        except Exception:
-            pass
+        pass
 
 
 def obter_dados_e_albuns_artista(ytmusic: YTMusic, nome_artista: str, pasta_artista: Path) -> list[dict]:
-    """Busca o artista, baixa a foto dele (artist.jpg) e retorna a lista de álbuns."""
     resultados = ytmusic.search(nome_artista, filter="artists", limit=3)
     if not resultados:
         print(f"  [!] Artista '{nome_artista}' não encontrado no YouTube Music.")
@@ -325,8 +266,6 @@ def obter_dados_e_albuns_artista(ytmusic: YTMusic, nome_artista: str, pasta_arti
     print(f"  -> Artista identificado: {nome_oficial} (ID: {browse_id})")
 
     dados_artista = ytmusic.get_artist(browse_id)
-
-    # Baixa a imagem do artista (artist.jpg) se ainda não existir na pasta da banda
     thumbs_artista = dados_artista.get("thumbnails") or artista_info.get("thumbnails") or []
     caminho_img_artista = pasta_artista / "artist.jpg"
     if not caminho_img_artista.exists() and not (pasta_artista / "folder.jpg").exists():
@@ -350,11 +289,9 @@ def montar_opcoes_ytdlp(
     total_faixas: int,
     ano_album: str,
     navegador_escolhido: str,
-    usar_cookies: bool = True,
-    cliente_player: list[str] | None = None
+    usar_cookies: bool = True
 ) -> dict:
     ydl_opts = {
-        # Formato super flexível para evitar 'Requested format is not available'
         'format': 'bestaudio/best',
         'outtmpl': str(caminho_saida),
         'download_archive': str(arquivo_historico),
@@ -362,8 +299,10 @@ def montar_opcoes_ytdlp(
         'no_warnings': True,
         'ignoreerrors': True,
         'writethumbnail': True,
-        'sleep_interval': 1,
-        'max_sleep_interval': 3,
+        'sleep_interval': 2,
+        'max_sleep_interval': 5,
+        # Força o cliente web_music otimizado com curl-cffi para evitar bloqueio anti-bot
+        'extractor_args': {'youtube': {'player_client': ['web_music', 'web']}},
         'postprocessors': [
             {
                 'key': 'FFmpegExtractAudio',
@@ -385,9 +324,6 @@ def montar_opcoes_ytdlp(
             '-metadata', f'date={ano_album}',
         ],
     }
-
-    if cliente_player:
-        ydl_opts['extractor_args'] = {'youtube': {'player_client': cliente_player}}
 
     if usar_cookies:
         if ARQUIVO_COOKIES.exists():
@@ -426,19 +362,16 @@ def baixar_album(
 
     pasta_album.mkdir(parents=True, exist_ok=True)
 
-    # 1. Garante a capa do álbum (cover.jpg) dentro da pasta do álbum
     thumbs_album = detalhes_album.get("thumbnails") or album_resumo.get("thumbnails") or []
     caminho_capa = pasta_album / "cover.jpg"
     if not caminho_capa.exists() and not (pasta_album / "folder.jpg").exists():
         baixar_imagem(thumbs_album, caminho_capa, f"Capa do álbum '{titulo_album}'")
 
-    # 2. Lista todos os arquivos de áudio que já existem na pasta do álbum
     arquivos_audio_locais = [
         f for f in pasta_album.iterdir()
         if f.is_file() and f.suffix.lower() in EXTENSOES_AUDIO
     ]
 
-    # Verifica quais faixas realmente faltam usando comparação inteligente
     faixas_faltantes = []
     for idx, faixa in enumerate(faixas, start=1):
         titulo_faixa = faixa.get("title", f"Faixa {idx}")
@@ -446,7 +379,7 @@ def baixar_album(
             faixas_faltantes.append((idx, faixa))
 
     if not faixas_faltantes:
-        print(f"    [✓] Todas as {len(faixas)} faixas (e capa) de '{titulo_album}' já estão na pasta! Pulando...")
+        print(f"    [✓] Todas as {len(faixas)} faixas de '{titulo_album}' já estão na pasta! Pulando...")
         return
 
     print(f"    [+] Baixando {len(faixas_faltantes)} faixa(s) faltante(s) de '{titulo_album}' -> {pasta_album.name}")
@@ -466,11 +399,10 @@ def baixar_album(
         url = "https:" + f"//music.youtube.com/watch?v={video_id}"
         print(f"      [↓] Baixando: {nome_arquivo_limpo}...")
 
-        # Tentativa 1: Cliente web_music/tv com cookies (evita 'Requested format is not available')
+        # Tentativa 1: Download direto usando o ID oficial do YouTube Music com cookies e curl-cffi
         ydl_opts = montar_opcoes_ytdlp(
             caminho_saida, arquivo_historico, nome_artista, titulo_album,
-            idx, len(faixas), ano_album, navegador_escolhido,
-            usar_cookies=True, cliente_player=['tv', 'web_music', 'default']
+            idx, len(faixas), ano_album, navegador_escolhido, usar_cookies=True
         )
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -478,31 +410,23 @@ def baixar_album(
         except Exception:
             pass
 
-        # Tentativa 2: Sem cookies (usando cliente Android/iOS nativo, caso os cookies restrinjam os formatos)
+        # Tentativa 2 (Fallback inteligente): Se falhou, busca outra versão oficial da música via ytmusicapi (evitando busca de texto aberta)
         if not arquivo_mp3_final.exists():
-            ydl_opts_sem_cookie = montar_opcoes_ytdlp(
-                caminho_saida, arquivo_historico, nome_artista, titulo_album,
-                idx, len(faixas), ano_album, navegador_escolhido,
-                usar_cookies=False
-            )
+            print(f"      [!] Buscando versão alternativa via catálogo oficial para '{titulo_faixa}'...")
             try:
-                with yt_dlp.YoutubeDL(ydl_opts_sem_cookie) as ydl:
-                    ydl.download([url])
-            except Exception:
-                pass
-
-        # Tentativa 3 (Fallback final): Busca áudio alternativo no YouTube
-        if not arquivo_mp3_final.exists():
-            print(f"      [!] Tentando fonte alternativa para '{titulo_faixa}'...")
-            busca_alternativa = f"ytsearch1:{nome_artista} {titulo_faixa} official audio"
-            ydl_opts_fallback = montar_opcoes_ytdlp(
-                caminho_saida, arquivo_historico, nome_artista, titulo_album,
-                idx, len(faixas), ano_album, navegador_escolhido,
-                usar_cookies=True, cliente_player=['tv', 'web']
-            )
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts_fallback) as ydl:
-                    ydl.download([busca_alternativa])
+                resultados_busca = ytmusic.search(f"{nome_artista} {titulo_faixa}", filter="songs", limit=3)
+                for res in resultados_busca:
+                    vid_alt = res.get("videoId")
+                    if vid_alt and vid_alt != video_id:
+                        url_alt = f"https://music.youtube.com/watch?v={vid_alt}"
+                        ydl_opts_alt = montar_opcoes_ytdlp(
+                            caminho_saida, arquivo_historico, nome_artista, titulo_album,
+                            idx, len(faixas), ano_album, navegador_escolhido, usar_cookies=True
+                        )
+                        with yt_dlp.YoutubeDL(ydl_opts_alt) as ydl:
+                            ydl.download([url_alt])
+                        if arquivo_mp3_final.exists():
+                            break
             except Exception:
                 pass
 
@@ -561,7 +485,7 @@ def varrer_biblioteca(caminho_raiz: Path, navegador_escolhido: str):
 
 
 if __name__ == "__main__":
-    print("=== Sincronizador de Discografias v3.0 (Linux, Windows & macOS) ===")
+    print("=== Sincronizador de Discografias v3.1 (Anti-Bot & Direct ID) ===")
 
     config = carregar_config_local()
     caminho_salvo = config.get("caminho_musicas", "")
@@ -575,11 +499,7 @@ if __name__ == "__main__":
         entrada = input("   Pressione [ENTER] para usar o caminho salvo ou digite outro: ").strip()
         caminho_final = entrada if entrada else caminho_salvo
     else:
-        print("   Digite o caminho completo da sua pasta de músicas:")
-        print("   • Exemplo Linux  : /home/usuario/Musicas  ou  /run/media/usuario/HD/music")
-        print("   • Exemplo Windows: C:\\Users\\Usuario\\Music  ou  D:\\Musicas")
-        print("   • Exemplo macOS  : /Users/usuario/Music")
-        caminho_final = input("\n   Caminho da pasta: ").strip()
+        caminho_final = input("\n   Caminho da pasta de músicas: ").strip()
 
     if not caminho_final:
         print("[❌] Nenhum caminho informado. Encerrando.")
