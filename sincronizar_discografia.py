@@ -1,9 +1,11 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import unicodedata
+import urllib.request
 from pathlib import Path
 from ytmusicapi import YTMusic
 
@@ -32,8 +34,9 @@ def salvar_config_local(caminho_musicas: str):
 
 def verificar_dependencias():
     for cmd in ["yt-dlp", "ffmpeg"]:
-        if subprocess.run(["which", cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
-            print(f"[❌] Erro crítico: A ferramenta '{cmd}' não foi encontrada no sistema.")
+        if not shutil.which(cmd):
+            print(f"[❌] Erro crítico: A ferramenta '{cmd}' não foi encontrada no PATH do sistema.")
+            print(f"     Certifique-se de tê-la instalada e acessível no terminal.")
             sys.exit(1)
 
 
@@ -70,6 +73,27 @@ def limpar_arquivos_full_album(caminho_raiz: Path):
     print(f"🧹 Faxina concluída! Total de arquivos removidos: {removidos}\n")
 
 
+def baixar_capa_album(thumbnails: list[dict], pasta_album: Path):
+    caminho_capa = pasta_album / "cover.jpg"
+    caminho_folder = pasta_album / "folder.jpg"
+    if caminho_capa.exists() or caminho_folder.exists() or not thumbnails:
+        return
+
+    url = thumbnails[-1].get("url", "")
+    if not url:
+        return
+
+    # Maximiza resolução do YouTube Music
+    url = re.sub(r'=w\d+-h\d+.*$', '=w1200-h1200-l90-rj', url)
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=10) as resp, open(caminho_capa, 'wb') as f:
+            f.write(resp.read())
+        print(f"    [🖼️ Capa salva] cover.jpg")
+    except Exception:
+        pass
+
+
 def baixar_faixa_cli(termo_busca: str, caminho_saida: Path, arquivo_historico: Path, nome_artista: str, titulo_album: str) -> bool:
     cmd = [
         "yt-dlp",
@@ -97,6 +121,25 @@ def baixar_faixa_cli(termo_busca: str, caminho_saida: Path, arquivo_historico: P
     return resultado.returncode == 0
 
 
+def obter_todos_lancamentos_artista(ytmusic: YTMusic, browse_id: str) -> list[dict]:
+    dados_artista = ytmusic.get_artist(browse_id)
+    lancamentos = []
+
+    # Extrai tanto Álbuns quanto Singles e EPs
+    for secao_key in ["albums", "singles"]:
+        secao = dados_artista.get(secao_key, {})
+        if secao.get("browseId") and secao.get("params"):
+            try:
+                itens = ytmusic.get_artist_albums(secao["browseId"], secao["params"])
+                lancamentos.extend(itens)
+            except Exception:
+                lancamentos.extend(secao.get("results", []))
+        else:
+            lancamentos.extend(secao.get("results", []))
+
+    return lancamentos
+
+
 def varrer_biblioteca(caminho_raiz: Path):
     if not verificar_armazenamento(caminho_raiz):
         return
@@ -111,7 +154,7 @@ def varrer_biblioteca(caminho_raiz: Path):
     pastas_artistas = sorted([p for p in caminho_raiz.iterdir() if p.is_dir() and not p.name.startswith('.') and p.name.lower() != 'lost+found'])
 
     total_artistas = len(pastas_artistas)
-    print(f"=== [FASE 2] Sincronizador v3.5 (Auto Folder Creation Engine) ===")
+    print(f"=== [FASE 2] Sincronizador v3.6 (Albums, EPs & Singles + Cover.jpg) ===")
     print(f"📊 Total de artistas encontrados: {total_artistas}\n")
 
     for idx_art, pasta_artista in enumerate(pastas_artistas, start=1):
@@ -120,36 +163,29 @@ def varrer_biblioteca(caminho_raiz: Path):
 
         pastas_albuns = [p for p in pasta_artista.iterdir() if p.is_dir() and not p.name.startswith('.')]
 
-        # Se o artista não tiver nenhuma pasta de álbum, criamos automaticamente buscando na API do YouTube Music
+        # Criação de pastas para artistas sem estrutura local (Álbuns + EPs + Singles)
         if not pastas_albuns and ytmusic:
-            print(f"  [+] Artista sem pastas. Buscando discografia oficial de '{nome_artista}' para criar as pastas...")
+            print(f"  [+] Artista sem pastas. Buscando discografia (Álbuns, EPs e Singles) de '{nome_artista}'...")
             try:
                 res = ytmusic.search(nome_artista, filter="artists", limit=1)
                 if res:
                     browse_id = res[0].get("browseId")
-                    dados_artista = ytmusic.get_artist(browse_id)
-                    secao = dados_artista.get("albums", {})
-                    albuns = []
-                    if secao.get("browseId") and secao.get("params"):
-                        albuns = ytmusic.get_artist_albums(secao["browseId"], secao["params"])
-                    else:
-                        albuns = secao.get("results", [])
+                    lancamentos = obter_todos_lancamentos_artista(ytmusic, browse_id)
 
-                    for alb in albuns[:8]: # Pega os principais álbuns para não exagerar de primeira
-                        t_alb = alb.get("title", "Álbum Desconhecido")
-                        ano_alb = alb.get("year", "")
-                        nome_pasta_album = f"[{ano_alb}] {t_alb}" if ano_alb else t_alb
-                        nova_pasta = pasta_artista / sanitizar_nome_sistema(nome_pasta_album)
+                    for item in lancamentos:
+                        t_item = item.get("title", "Lançamento")
+                        ano_item = item.get("year", "")
+                        nome_pasta = f"[{ano_item}] {t_item}" if ano_item else t_item
+                        nova_pasta = pasta_artista / sanitizar_nome_sistema(nome_pasta)
                         nova_pasta.mkdir(parents=True, exist_ok=True)
                         print(f"    [📁 Criada] {nova_pasta.name}")
-                        
-                        # Atualiza a lista de pastas de álbuns recém-criadas
-                        pastas_albuns = [p for p in pasta_artista.iterdir() if p.is_dir() and not p.name.startswith('.')]
+
+                    pastas_albuns = [p for p in pasta_artista.iterdir() if p.is_dir() and not p.name.startswith('.')]
             except Exception as e:
-                print(f"    [!] Erro ao buscar álbuns automáticos: {e}")
+                print(f"    [!] Erro ao buscar discografia automática: {e}")
 
         if not pastas_albuns:
-            print("  [!] Nenhuma pasta de álbum disponível para processar.")
+            print("  [!] Nenhuma pasta de álbum/single disponível para processar.")
             print("-" * 60)
             continue
 
@@ -157,6 +193,7 @@ def varrer_biblioteca(caminho_raiz: Path):
             titulo_album = pasta_album.name
             arquivos_locais = [f for f in pasta_album.iterdir() if f.is_file() and f.suffix.lower() in EXTENSOES_AUDIO]
             
+            # Se já possui arquivos de áudio completos, ignora o download de faixas
             if len(arquivos_locais) >= 3:
                 continue
 
@@ -170,6 +207,10 @@ def varrer_biblioteca(caminho_raiz: Path):
                     if res:
                         browse_id = res[0].get("browseId")
                         detalhes = ytmusic.get_album(browse_id)
+                        
+                        # Salva a imagem cover.jpg avulsa na pasta
+                        baixar_capa_album(detalhes.get("thumbnails", []), pasta_album)
+
                         tracks = detalhes.get("tracks", [])
                         if tracks:
                             print(f"    [i] Tracklist oficial encontrada ({len(tracks)} faixas). Baixando separadamente...")
@@ -191,7 +232,7 @@ def varrer_biblioteca(caminho_raiz: Path):
 
         print("-" * 60)
 
-    print("\n✨ Varredura, Criação de Pastas e Sincronização concluídas com sucesso!")
+    print("\n✨ Varredura, Download de Capas e Sincronização concluídas com sucesso!")
 
 
 if __name__ == "__main__":
