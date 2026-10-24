@@ -347,7 +347,7 @@ def varrer_biblioteca(caminho_raiz: Path, navegador_escolhido: str):
     ytmusic = YTMusic()
     pastas_artistas = sorted([p for p in caminho_raiz.iterdir() if p.is_dir() and not p.name.startswith('.') and p.name.lower() != 'lost+found'])
 
-    print(=== f"=== Iniciando varredura ({len(pastas_artistas)} artistas encontrados) ===\n")
+    print(f"=== Iniciando varredura ({len(pastas_artistas)} artistas encontrados) ===\n")
 
     for pasta_artista in pastas_artistas:
         nome_artista = pasta_artista.name
