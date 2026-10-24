@@ -190,7 +190,7 @@ def baixar_album(ytmusic: YTMusic, album_resumo: dict, pasta_album: Path, nome_a
         print(f"      [↓] Baixando: {nome_arq}...")
 
         ydl_opts = {
-            'format': 'bestaudio/best',
+            'format': 'ba/b',
             'outtmpl': str(caminho_saida),
             'download_archive': str(arquivo_historico),
             'quiet': True,
@@ -198,6 +198,8 @@ def baixar_album(ytmusic: YTMusic, album_resumo: dict, pasta_album: Path, nome_a
             'ignoreerrors': True,
             'writethumbnail': True,
             'force_ipv4': True,
+            # Contorna o socket SSL do Python 3.14 usando cliente web padrão do yt-dlp sem requests complexos
+            'extractor_args': {'youtube': {'player_client': ['web']}},
             'postprocessors': [
                 {'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '320'},
                 {'key': 'EmbedThumbnail'},
@@ -258,7 +260,7 @@ def varrer_biblioteca(caminho_raiz: Path):
 
 
 if __name__ == "__main__":
-    print("=== Sincronizador v6.0 (Stable Python 3.14 Compatible) ===")
+    print("=== Sincronizador v7.0 (Python 3.14 SSL Socket Bypass) ===")
     config = carregar_config_local()
     nav = escolher_navegador(config.get("navegador_cookies", ""))
     caminho = config.get("caminho_musicas", "") or input("\nCaminho da pasta de músicas: ").strip()
