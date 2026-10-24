@@ -5,6 +5,7 @@ import subprocess
 import sys
 import unicodedata
 from pathlib import Path
+from ytmusicapi import YTMusic
 
 PASTA_SCRIPT = Path(__file__).parent
 ARQUIVO_COOKIES = PASTA_SCRIPT / "cookies.txt"
@@ -64,6 +65,22 @@ def normalizar_para_comparacao(texto: str, remover_numeros_faixa: bool = False) 
     return re.sub(r'\s+', ' ', re.sub(r'[^a-z0-9\s]', ' ', texto)).strip()
 
 
+def faixa_ja_existe_na_pasta(titulo_faixa: str, idx: int, arquivos_audio_locais: list[str]) -> bool:
+    alvo_norm = normalizar_para_comparacao(titulo_faixa, remover_numeros_faixa=True)
+    for nome_arq in arquivos_audio_locais:
+        arq_norm = normalizar_para_comparacao(nome_arq, remover_numeros_faixa=True)
+        if not arq_norm:
+            continue
+        if alvo_norm and (alvo_norm == arq_norm or (len(alvo_norm) >= 4 and (alvo_norm in arq_norm or arq_norm in alvo_norm))):
+            return True
+        if re.match(rf'^0?{idx}[\s\.\-_]', nome_arq) and SequenceMatcher(None, alvo_norm, arq_norm).ratio() >= 0.55:
+            return True
+    return False
+
+
+from difflib import SequenceMatcher
+
+
 def baixar_faixa_cli(termo_busca: str, caminho_saida: Path, arquivo_historico: Path, nome_artista: str, titulo_album: str) -> bool:
     cmd = [
         "yt-dlp",
@@ -96,37 +113,78 @@ def varrer_biblioteca(caminho_raiz: Path):
     if not verificar_armazenamento(caminho_raiz):
         return
 
+    try:
+        ytmusic = YTMusic()
+    except Exception:
+        ytmusic = None
+
     pastas_artistas = sorted([p for p in caminho_raiz.iterdir() if p.is_dir() and not p.name.startswith('.') and p.name.lower() != 'lost+found'])
 
-    print(f"=== Iniciando varredura e sicronização ({len(pastas_artistas)} artistas encontrados) ===\n")
+    print(=== f"=== Iniciando Sincronização Inteligente ({len(pastas_artistas)} artistas encontrados) ===\n")
 
     for pasta_artista in pastas_artistas:
         nome_artista = pasta_artista.name
         print(f"► Banda/Artista: [{nome_artista}]")
 
         pastas_albuns = [p for p in pasta_artista.iterdir() if p.is_dir() and not p.name.startswith('.')]
-
         if not pastas_albuns:
-            print("  [!] Nenhuma pasta de álbum encontrada para este artista.")
+            print("  [!] Nenhuma pasta de álbum encontrada.")
             print("-" * 60)
             continue
 
+        # Tenta buscar os álbuns oficiais no YouTube Music
+        albuns_oficiais = []
+        if ytmusic:
+            try:
+                res = ytmusic.search(nome_artista, filter="artists", limit=1)
+                if res:
+                    browse_id = res[0].get("browseId")
+                    dados = ytmusic.get_artist(browse_id)
+                    secao = dados.get("albums", {})
+                    if secao.get("browseId") and secao.get("params"):
+                        albuns_oficiais = ytmusic.get_artist_albums(secao["browseId"], secao["params"])
+                    else:
+                        albuns_oficiais = secao.get("results", [])
+            except Exception:
+                pass
+
         for pasta_album in pastas_albuns:
             titulo_album = pasta_album.name
-            print(f"  📁 Álbum/Pasta: {titulo_album}")
+            print(f"  📁 Pasta local: {titulo_album}")
 
             arquivo_historico = pasta_album / ".downloaded.txt"
-            
-            # Lista arquivos de áudio já presentes na pasta do álbum
-            arquivos_locais = [f for f in pasta_album.iterdir() if f.is_file() and f.suffix.lower() in EXTENSOES_AUDIO]
-            
-            print(f"    [i] Arquivos encontrados na pasta: {len(arquivos_locais)} música(s).")
+            arquivos_locais = [f.stem for f in pasta_album.iterdir() if f.is_file() and f.suffix.lower() in EXTENSOES_AUDIO]
 
-            # Se a pasta estiver vazia ou você quiser buscar faixas específicas baseadas no nome da pasta
-            # O script faz uma varredura inteligente do nome da pasta para buscar faixas faltantes
-            if len(arquivos_locais) == 0:
-                print(f"    [+] Pasta vazia detectada. Buscando álbuns/faixas correspondentes para '{titulo_album}'...")
-                termo_busca = f"ytsearch5:{nome_artista} {titulo_album} full album audio"
+            # Se conseguirmos os dados do álbum oficial, checamos faixa a faixa
+            album_encontrado = None
+            for alb in albuns_oficiais:
+                t_alb = alb.get("title", "")
+                if SequenceMatcher(None, normalizar_para_comparacao(titulo_album), normalizar_para_comparacao(t_alb)).ratio() >= 0.6:
+                    album_encontrado = alb
+                    break
+
+            if album_encontrado and ytmusic:
+                try:
+                    detalhes = ytmusic.get_album(album_encontrado.get("browseId"))
+                    faixas = detalhes.get("tracks", [])
+                    if faixas:
+                        print(f"    [i] Álbum oficial identificado: '{album_encontrado.get('title')}' ({len(faixas)} faixas)")
+                        for idx, faixa in enumerate(faixas, start=1):
+                            t_faixa = faixa.get("title", "")
+                            if not faixa_ja_existe_na_pasta(t_faixa, idx, arquivos_locais):
+                                print(f"      [↓] Baixando faixa faltante: {t_faixa}")
+                                nome_arq = sanitizar_nome_sistema(f"{idx:02d} - {t_faixa}")
+                                caminho_saida = pasta_album / f"{nome_arq}.%(ext)s"
+                                termo = f"ytsearch1:{nome_artista} {album_encontrado.get('title')} {t_faixa} audio"
+                                baixar_faixa_cli(termo, caminho_saida, arquivo_historico, nome_artista, album_encontrado.get('title'))
+                        continue
+                except Exception:
+                    pass
+
+            # Fallback robusto caso a API falhe ou não ache o álbum exato: busca o álbum completo pela pasta
+            if len(arquivos_locais) < 5:  
+                print(f"    [+] Sincronizando álbum por busca direta: '{titulo_album}'...")
+                termo_busca = f"ytsearch10:{nome_artista} {titulo_album} full album audio"
                 caminho_saida = pasta_album / "%(autonumber)s - %(title)s.%(ext)s"
                 baixar_faixa_cli(termo_busca, caminho_saida, arquivo_historico, nome_artista, titulo_album)
 
@@ -134,7 +192,7 @@ def varrer_biblioteca(caminho_raiz: Path):
 
 
 if __name__ == "__main__":
-    print("=== Sincronizador v1.9 (Smart Folder Sync & CLI Download) ===")
+    print("=== Sincronizador v2.0 (Smart Album Splicing & CLI Engine) ===")
     verificar_dependencias()
     config = carregar_config_local()
     caminho_salvo = config.get("caminho_musicas", "")
