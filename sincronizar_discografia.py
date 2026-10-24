@@ -36,22 +36,10 @@ def salvar_config_local(caminho_musicas: str, navegador: str):
 
 def escolher_navegador(navegador_salvo: str) -> str:
     print("\n🌐 AUTENTICAÇÃO DO YOUTUBE")
-    print("   [1] Google Chrome / Brave / Chromium (Via cookies.txt na pasta)")
-    print("   [2] Sem navegador (Clientes públicos do yt-dlp)")
+    print("   [1] Google Chrome / Brave / Chromium (Via cookies.txt se houver)")
+    print("   [2] Sem navegador (Clientes padrão do yt-dlp)")
     escolha = input("\nEscolha [1-2] (Padrão: 1): ").strip()
     return "chrome" if escolha != "2" else "nenhum"
-
-
-def obter_config_cookies_navegador(navegador: str) -> tuple | None:
-    if ARQUIVO_COOKIES.exists() or not navegador or navegador == "nenhum":
-        return None
-    if sys.platform.startswith("linux"):
-        home = Path.home()
-        nativo = home / ".config/google-chrome"
-        flatpak = home / ".var/app/com.google.Chrome/config/google-chrome"
-        if not nativo.exists() and flatpak.exists():
-            return (navegador, str(flatpak))
-    return (navegador,)
 
 
 def verificar_armazenamento(caminho_alvo: Path) -> bool:
@@ -156,19 +144,9 @@ def obter_dados_e_albuns_artista(ytmusic: YTMusic, nome_artista: str, pasta_arti
     return secao_albuns.get("results", [])
 
 
-def montar_opcoes_ytdlp(
-    caminho_saida: Path,
-    arquivo_historico: Path,
-    nome_artista: str,
-    titulo_album: str,
-    idx: int,
-    total_faixas: int,
-    ano_album: str,
-    navegador_escolhido: str
-) -> dict:
+def montar_opcoes_ytdlp(caminho_saida: Path, arquivo_historico: Path, nome_artista: str, titulo_album: str, idx: int, total_faixas: int, ano_album: str) -> dict:
     ydl_opts = {
-        # 'bestaudio' aceita qualquer stream de áudio disponível, evitando o erro de formato indisponível
-        'format': 'bestaudio',
+        'format': 'bestaudio/best',
         'outtmpl': str(caminho_saida),
         'download_archive': str(arquivo_historico),
         'quiet': True,
@@ -177,7 +155,8 @@ def montar_opcoes_ytdlp(
         'writethumbnail': True,
         'sleep_interval': 1,
         'max_sleep_interval': 3,
-        'extractor_args': {'youtube': {'player_client': ['ios', 'web']}},
+        # Força o cliente android para contornar restrições de formato do YouTube Music
+        'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
         'postprocessors': [
             {'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '320'},
             {'key': 'EmbedThumbnail'},
@@ -193,18 +172,11 @@ def montar_opcoes_ytdlp(
 
     if ARQUIVO_COOKIES.exists():
         ydl_opts['cookiefile'] = str(ARQUIVO_COOKIES)
-    else:
-        tupla_nav = obter_config_cookies_navegador(navegador_escolhido)
-        if tupla_nav:
-            try:
-                ydl_opts['cookiesfrombrowser'] = tupla_nav
-            except Exception:
-                pass
 
     return ydl_opts
 
 
-def baixar_album(ytmusic: YTMusic, album_resumo: dict, pasta_album: Path, nome_artista: str, navegador_escolhido: str):
+def baixar_album(ytmusic: YTMusic, album_resumo: dict, pasta_album: Path, nome_artista: str):
     browse_id = album_resumo.get("browseId")
     titulo_album = album_resumo.get("title", "Álbum Desconhecido")
     ano_album = album_resumo.get("year", "")
@@ -246,7 +218,7 @@ def baixar_album(ytmusic: YTMusic, album_resumo: dict, pasta_album: Path, nome_a
         url = f"https://music.youtube.com/watch?v={video_id}"
         print(f"      [↓] Baixando: {nome_arq}...")
 
-        ydl_opts = montar_opcoes_ytdlp(caminho_saida, arquivo_historico, nome_artista, titulo_album, idx, len(faixas), ano_album, navegador_escolhido)
+        ydl_opts = montar_opcoes_ytdlp(caminho_saida, arquivo_historico, nome_artista, titulo_album, idx, len(faixas), ano_album)
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
@@ -254,7 +226,7 @@ def baixar_album(ytmusic: YTMusic, album_resumo: dict, pasta_album: Path, nome_a
             pass
 
 
-def varrer_biblioteca(caminho_raiz: Path, navegador_escolhido: str):
+def varrer_biblioteca(caminho_raiz: Path):
     if not verificar_armazenamento(caminho_raiz):
         return
 
@@ -282,20 +254,20 @@ def varrer_biblioteca(caminho_raiz: Path, navegador_escolhido: str):
             pasta_existente = encontrar_pasta_album_local(titulo, pastas_albuns)
             if pasta_existente:
                 print(f"  [✓] Álbum '{titulo}' na pasta: '{pasta_existente.name}'")
-                baixar_album(ytmusic, album, pasta_existente, nome_artista, navegador_escolhido)
+                baixar_album(ytmusic, album, pasta_existente, nome_artista)
             else:
                 nova_pasta = sanitizar_nome_sistema(f"{ano} - {titulo}" if ano else titulo)
                 print(f"  [+] Criando pasta '{nova_pasta}'...")
-                baixar_album(ytmusic, album, pasta_artista / nova_pasta, nome_artista, navegador_escolhido)
+                baixar_album(ytmusic, album, pasta_artista / nova_pasta, nome_artista)
         print("-" * 60)
 
 
 if __name__ == "__main__":
-    print("=== Sincronizador v3.5 (Flexible Bestaudio Format) ===")
+    print("=== Sincronizador v3.6 (Android Client Bypass) ===")
     config = carregar_config_local()
     nav = escolher_navegador(config.get("navegador_cookies", ""))
     caminho = config.get("caminho_musicas", "") or input("\nCaminho da pasta de músicas: ").strip()
     if caminho:
         diretorio = Path(caminho.strip('\'"')).expanduser().resolve()
         salvar_config_local(str(diretorio), nav)
-        varrer_biblioteca(diretorio, nav)
+        varrer_biblioteca(diretorio)
