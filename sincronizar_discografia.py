@@ -11,8 +11,16 @@ import yt_dlp
 # CONFIGURAÇÕES GERAIS
 # =====================================================================
 
-CAMINHO_PADRAO = Path("/run/media/atlas/686a0628-f747-4637-bd50-93f5297b30ee/media/music/")
+# Coloque abaixo o caminho da sua pasta de músicas (ou deixe o placeholder para digitar ao abrir).
+# Exemplos no Linux  : "/home/usuario/Musicas" ou "/run/media/usuario/NomeDoHD/music"
+# Exemplos no Windows: "C:/Users/Usuario/Music" ou "D:/Musicas"
+CAMINHO_PADRAO = "DIGITE_AQUI_O_SEU_CAMINHO"
+
+# Navegador onde você está logado no YouTube para liberar músicas +18:
+# Opções: "firefox", "chrome", "brave", "edge", "chromium", "vivaldi" ou None
 NAVEGADOR_COOKIES = "firefox"
+
+# Se existir um arquivo 'cookies.txt' na mesma pasta deste script, ele terá prioridade:
 ARQUIVO_COOKIES = Path(__file__).parent / "cookies.txt"
 
 # =====================================================================
@@ -311,12 +319,22 @@ def varrer_biblioteca(caminho_raiz: Path):
 
 if __name__ == "__main__":
     print("=== Sincronizador de Discografias (Linux & Windows) ===")
-    print(f"Caminho padrão configurado: {CAMINHO_PADRAO}")
-    entrada = input("Pressione [ENTER] para usar o caminho padrão ou digite outro caminho: ").strip()
 
-    if entrada:
-        diretorio_musicas = Path(entrada.strip('\'"')).expanduser().resolve()
+    caminho_configurado = CAMINHO_PADRAO.strip()
+    usar_padrao = bool(caminho_configurado and caminho_configurado != "DIGITE_AQUI_O_SEU_CAMINHO")
+
+    if usar_padrao:
+        print(f"Caminho padrão configurado: {caminho_configurado}")
+        entrada = input("Pressione [ENTER] para usar o caminho padrão ou digite outro caminho: ").strip()
+        caminho_final = entrada if entrada else caminho_configurado
     else:
-        diretorio_musicas = CAMINHO_PADRAO
+        print("Digite o caminho da sua pasta de músicas.")
+        print("  • Exemplo no Linux  : /home/usuario/Musicas  ou  /run/media/usuario/HD/music")
+        print("  • Exemplo no Windows: C:\\Users\\Usuario\\Music  ou  D:\\Musicas")
+        caminho_final = input("\nCaminho da pasta: ").strip()
 
-    varrer_biblioteca(diretorio_musicas)
+    if not caminho_final:
+        print("[❌] Nenhum caminho informado. Encerrando.")
+    else:
+        diretorio_musicas = Path(caminho_final.strip('\'"')).expanduser().resolve()
+        varrer_biblioteca(diretorio_musicas)
