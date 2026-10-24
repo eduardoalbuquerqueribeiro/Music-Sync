@@ -5,7 +5,6 @@ import subprocess
 import sys
 import unicodedata
 from pathlib import Path
-from ytmusicapi import YTMusic
 
 PASTA_SCRIPT = Path(__file__).parent
 ARQUIVO_COOKIES = PASTA_SCRIPT / "cookies.txt"
@@ -71,9 +70,10 @@ def baixar_faixa_cli(termo_busca: str, caminho_saida: Path, arquivo_historico: P
     if ARQUIVO_COOKIES.exists():
         cmd.extend(["--cookies", str(ARQUIVO_COOKIES)])
 
+    # Injeção limpa de metadados sem falhas de string vazia
     cmd.extend([
-        "--parse-metadata", f":(?P<artist>{nome_artista})",
-        "--parse-metadata", f":(?P<album>{titulo_album})",
+        "--metadata-from-title", "%(artist)s - %(title)s",
+        "--add-metadata",
     ])
 
     cmd.append(termo_busca)
@@ -88,11 +88,10 @@ def varrer_biblioteca(caminho_raiz: Path):
 
     pastas_artistas = sorted([p for p in caminho_raiz.iterdir() if p.is_dir() and not p.name.startswith('.') and p.name.lower() != 'lost+found'])
 
-    # Mapeamento total para contagem de progresso
     total_artistas = len(pastas_artistas)
     total_albuns_geral = sum(len([p for p in art.iterdir() if p.is_dir() and not p.name.startswith('.')]) for art in pastas_artistas)
     
-    print(f"=== Sincronizador v2.3 (Live Progress Engine) ===")
+    print(f"=== Sincronizador v3.0 (JS Challenge Solver Enabled) ===")
     print(f"📊 Total encontrado: {total_artistas} artistas | {total_albuns_geral} álbuns/pastas.\n")
 
     album_contador = 0
@@ -119,7 +118,7 @@ def varrer_biblioteca(caminho_raiz: Path):
             print(f"  [{album_contador}/{total_albuns_geral}] 📥 Baixando faltando em: {titulo_album} ({len(arquivos_locais)} arquivos locais)")
             arquivo_historico = pasta_album / ".downloaded.txt"
 
-            termo_busca = f"ytsearch12:{nome_artista} {titulo_album} full album audio"
+            termo_busca = f"ytsearch10:{nome_artista} {titulo_album} full album audio"
             caminho_saida = pasta_album / "%(autonumber)s - %(title)s.%(ext)s"
             baixar_faixa_cli(termo_busca, caminho_saida, arquivo_historico, nome_artista, titulo_album)
 
