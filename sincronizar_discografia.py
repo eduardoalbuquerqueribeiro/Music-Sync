@@ -56,26 +56,18 @@ def sanitizar_nome_sistema(nome: str) -> str:
 def limpar_arquivos_full_album(caminho_raiz: Path):
     print("🧹 [FASE 1] Varrendo biblioteca em busca de arquivos indesejados 'full album'...")
     removidos = 0
-    
     for caminho_arquivo in caminho_raiz.rglob("*"):
         if caminho_arquivo.is_file() and caminho_arquivo.suffix.lower() in EXTENSOES_AUDIO:
             nome_arq_lower = caminho_arquivo.name.lower()
-            
-            # Critérios para identificar um full album indesejado pelo nome
             padroes_proibidos = ["full album", "full_album", "album completo", "full-album", "fullset", "full set"]
             if any(p in nome_arq_lower for p in padroes_proibidos):
                 try:
                     caminho_arquivo.unlink()
                     print(f"  [🗑️ Apagado] {caminho_arquivo.relative_to(caminho_raiz)}")
                     removidos += 1
-                    continue
-                except Exception as e:
-                    print(f"  [!] Erro ao apagar {caminho_arquivo.name}: {e}")
-
-            # Opcional: Se o arquivo for anormalmente grande para uma única música (ex: > 45MB e duração implícita por tamanho),
-            # mas o filtro de nome já pega 99% dos casos de full albums baixados por engano.
-            
-    print(f"🧹 Faxina concluída! Total de arquivos 'full album' removidos: {removidos}\n")
+                except Exception:
+                    pass
+    print(f"🧹 Faxina concluída! Total de arquivos removidos: {removidos}\n")
 
 
 def baixar_faixa_cli(termo_busca: str, caminho_saida: Path, arquivo_historico: Path, nome_artista: str, titulo_album: str) -> bool:
@@ -88,7 +80,7 @@ def baixar_faixa_cli(termo_busca: str, caminho_saida: Path, arquivo_historico: P
         "--add-metadata",
         "--force-ipv4",
         "--no-playlist",
-        "--match-filter", "duration < 900 & !is_live",  # Rejeita vídeos com mais de 15 minutos ou lives
+        "--match-filter", "duration < 900 & !is_live",
         "--extractor-args", "youtube:player_client=android",
         "--output", str(caminho_saida),
         "--download-archive", str(arquivo_historico),
@@ -109,7 +101,6 @@ def varrer_biblioteca(caminho_raiz: Path):
     if not verificar_armazenamento(caminho_raiz):
         return
 
-    # Executa a limpeza antes de tudo
     limpar_arquivos_full_album(caminho_raiz)
 
     try:
@@ -120,33 +111,56 @@ def varrer_biblioteca(caminho_raiz: Path):
     pastas_artistas = sorted([p for p in caminho_raiz.iterdir() if p.is_dir() and not p.name.startswith('.') and p.name.lower() != 'lost+found'])
 
     total_artistas = len(pastas_artistas)
-    total_albuns_geral = sum(len([p for p in art.iterdir() if p.is_dir() and not p.name.startswith('.')]) for art in pastas_artistas)
-    
-    print(f"=== [FASE 2] Sincronizador v3.4 (Clean & Track-by-Track Engine) ===")
-    print(f"📊 Total encontrado: {total_artistas} artistas | {total_albuns_geral} álbuns/pastas.\n")
-
-    album_contador = 0
+    print(f"=== [FASE 2] Sincronizador v3.5 (Auto Folder Creation Engine) ===")
+    print(f"📊 Total de artistas encontrados: {total_artistas}\n")
 
     for idx_art, pasta_artista in enumerate(pastas_artistas, start=1):
         nome_artista = pasta_artista.name
         print(f"\n[{idx_art}/{total_artistas}] 🎸 Banda/Artista: [{nome_artista}]")
 
         pastas_albuns = [p for p in pasta_artista.iterdir() if p.is_dir() and not p.name.startswith('.')]
+
+        # Se o artista não tiver nenhuma pasta de álbum, criamos automaticamente buscando na API do YouTube Music
+        if not pastas_albuns and ytmusic:
+            print(f"  [+] Artista sem pastas. Buscando discografia oficial de '{nome_artista}' para criar as pastas...")
+            try:
+                res = ytmusic.search(nome_artista, filter="artists", limit=1)
+                if res:
+                    browse_id = res[0].get("browseId")
+                    dados_artista = ytmusic.get_artist(browse_id)
+                    secao = dados_artista.get("albums", {})
+                    albuns = []
+                    if secao.get("browseId") and secao.get("params"):
+                        albuns = ytmusic.get_artist_albums(secao["browseId"], secao["params"])
+                    else:
+                        albuns = secao.get("results", [])
+
+                    for alb in albuns[:8]: # Pega os principais álbuns para não exagerar de primeira
+                        t_alb = alb.get("title", "Álbum Desconhecido")
+                        ano_alb = alb.get("year", "")
+                        nome_pasta_album = f"[{ano_alb}] {t_alb}" if ano_alb else t_alb
+                        nova_pasta = pasta_artista / sanitizar_nome_sistema(nome_pasta_album)
+                        nova_pasta.mkdir(parents=True, exist_ok=True)
+                        print(f"    [📁 Criada] {nova_pasta.name}")
+                        
+                        # Atualiza a lista de pastas de álbuns recém-criadas
+                        pastas_albuns = [p for p in pasta_artista.iterdir() if p.is_dir() and not p.name.startswith('.')]
+            except Exception as e:
+                print(f"    [!] Erro ao buscar álbuns automáticos: {e}")
+
         if not pastas_albuns:
-            print("  [!] Nenhuma pasta de álbum encontrada.")
+            print("  [!] Nenhuma pasta de álbum disponível para processar.")
             print("-" * 60)
             continue
 
         for pasta_album in pastas_albuns:
-            album_contador += 1
             titulo_album = pasta_album.name
-            
             arquivos_locais = [f for f in pasta_album.iterdir() if f.is_file() and f.suffix.lower() in EXTENSOES_AUDIO]
             
             if len(arquivos_locais) >= 3:
                 continue
 
-            print(f"  [{album_contador}/{total_albuns_geral}] 📥 Sincronizando faixas em: {titulo_album} ({len(arquivos_locais)} arquivos locais)")
+            print(f"  📥 Sincronizando faixas em: {titulo_album} ({len(arquivos_locais)} arquivos locais)")
             arquivo_historico = pasta_album / ".downloaded.txt"
 
             faixas_baixadas = False
@@ -177,7 +191,7 @@ def varrer_biblioteca(caminho_raiz: Path):
 
         print("-" * 60)
 
-    print("\n✨ Faxina, Varredura e Sincronização concluídas com sucesso!")
+    print("\n✨ Varredura, Criação de Pastas e Sincronização concluídas com sucesso!")
 
 
 if __name__ == "__main__":
