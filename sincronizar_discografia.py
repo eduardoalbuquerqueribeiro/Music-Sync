@@ -91,6 +91,7 @@ def baixar_faixa_cli(termo_busca: str, caminho_saida: Path, arquivo_historico: P
         "--add-metadata",
         "--force-ipv4",
         "--no-playlist",
+        # Removido o --quiet para você ver o yt-dlp conversando na tela em tempo real!
         "--output", str(caminho_saida),
         "--download-archive", str(arquivo_historico),
     ]
@@ -105,7 +106,7 @@ def baixar_faixa_cli(termo_busca: str, caminho_saida: Path, arquivo_historico: P
 
     cmd.append(termo_busca)
 
-    resultado = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    resultado = subprocess.run(cmd)
     return resultado.returncode == 0
 
 
@@ -120,11 +121,11 @@ def varrer_biblioteca(caminho_raiz: Path):
 
     pastas_artistas = sorted([p for p in caminho_raiz.iterdir() if p.is_dir() and not p.name.startswith('.') and p.name.lower() != 'lost+found'])
 
-    print(f"=== Iniciando Sincronização Inteligente ({len(pastas_artistas)} artistas encontrados) ===\n")
+    print(f"=== Iniciando Sincronização Inteligente v2.1 ({len(pastas_artistas)} artistas encontrados) ===\n")
 
     for pasta_artista in pastas_artistas:
         nome_artista = pasta_artista.name
-        print(f"► Banda/Artista: [{nome_artista}]")
+        print(f"\n► Banda/Artista: [{nome_artista}]")
 
         pastas_albuns = [p for p in pasta_artista.iterdir() if p.is_dir() and not p.name.startswith('.')]
         if not pastas_albuns:
@@ -132,67 +133,24 @@ def varrer_biblioteca(caminho_raiz: Path):
             print("-" * 60)
             continue
 
-        # Tenta buscar os álbuns oficiais no YouTube Music
-        albuns_oficiais = []
-        if ytmusic:
-            try:
-                res = ytmusic.search(nome_artista, filter="artists", limit=1)
-                if res:
-                    browse_id = res[0].get("browseId")
-                    dados = ytmusic.get_artist(browse_id)
-                    secao = dados.get("albums", {})
-                    if secao.get("browseId") and secao.get("params"):
-                        albuns_oficiais = ytmusic.get_artist_albums(secao["browseId"], secao["params"])
-                    else:
-                        albuns_oficiais = secao.get("results", [])
-            except Exception:
-                pass
-
         for pasta_album in pastas_albuns:
             titulo_album = pasta_album.name
-            print(f"  📁 Pasta local: {titulo_album}")
+            print(f"  📁 Analisando Pasta: {titulo_album}")
 
             arquivo_historico = pasta_album / ".downloaded.txt"
             arquivos_locais = [f.stem for f in pasta_album.iterdir() if f.is_file() and f.suffix.lower() in EXTENSOES_AUDIO]
 
-            # Se conseguirmos os dados do álbum oficial, checamos faixa a faixa
-            album_encontrado = None
-            for alb in albuns_oficiais:
-                t_alb = alb.get("title", "")
-                if SequenceMatcher(None, normalizar_para_comparacao(titulo_album), normalizar_para_comparacao(t_alb)).ratio() >= 0.6:
-                    album_encontrado = alb
-                    break
-
-            if album_encontrado and ytmusic:
-                try:
-                    detalhes = ytmusic.get_album(album_encontrado.get("browseId"))
-                    faixas = detalhes.get("tracks", [])
-                    if faixas:
-                        print(f"    [i] Álbum oficial identificado: '{album_encontrado.get('title')}' ({len(faixas)} faixas)")
-                        for idx, faixa in enumerate(faixas, start=1):
-                            t_faixa = faixa.get("title", "")
-                            if not faixa_ja_existe_na_pasta(t_faixa, idx, arquivos_locais):
-                                print(f"      [↓] Baixando faixa faltante: {t_faixa}")
-                                nome_arq = sanitizar_nome_sistema(f"{idx:02d} - {t_faixa}")
-                                caminho_saida = pasta_album / f"{nome_arq}.%(ext)s"
-                                termo = f"ytsearch1:{nome_artista} {album_encontrado.get('title')} {t_faixa} audio"
-                                baixar_faixa_cli(termo, caminho_saida, arquivo_historico, nome_artista, album_encontrado.get('title'))
-                        continue
-                except Exception:
-                    pass
-
-            # Fallback robusto caso a API falhe ou não ache o álbum exato: busca o álbum completo pela pasta
-            if len(arquivos_locais) < 5:  
-                print(f"    [+] Sincronizando álbum por busca direta: '{titulo_album}'...")
-                termo_busca = f"ytsearch10:{nome_artista} {titulo_album} full album audio"
-                caminho_saida = pasta_album / "%(autonumber)s - %(title)s.%(ext)s"
-                baixar_faixa_cli(termo_busca, caminho_saida, arquivo_historico, nome_artista, titulo_album)
+            # Dispara busca de completude do álbum caso tenha menos de 3 músicas ou se desejar forçar
+            print(f"    [+] Sincronizando e buscando faixas para '{titulo_album}'...")
+            termo_busca = f"ytsearch12:{nome_artista} {titulo_album} full album audio"
+            caminho_saida = pasta_album / "%(autonumber)s - %(title)s.%(ext)s"
+            baixar_faixa_cli(termo_busca, caminho_saida, arquivo_historico, nome_artista, titulo_album)
 
         print("-" * 60)
 
 
 if __name__ == "__main__":
-    print("=== Sincronizador v2.0 (Smart Album Splicing & CLI Engine) ===")
+    print("=== Sincronizador v2.1 (Verbose CLI Engine) ===")
     verificar_dependencias()
     config = carregar_config_local()
     caminho_salvo = config.get("caminho_musicas", "")
