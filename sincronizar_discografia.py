@@ -5,6 +5,7 @@ import subprocess
 import sys
 import unicodedata
 from pathlib import Path
+from ytmusicapi import YTMusic
 
 PASTA_SCRIPT = Path(__file__).parent
 ARQUIVO_CONFIG_LOCAL = PASTA_SCRIPT / ".config_local.json"
@@ -62,7 +63,8 @@ def baixar_faixa_cli(termo_busca: str, caminho_saida: Path, arquivo_historico: P
         "--add-metadata",
         "--force-ipv4",
         "--no-playlist",
-        # Usa o player android sem conflito de cookies de desktop
+        # Garante que o yt-dlp rejeite vídeos longos (> 15 minutos) para nunca baixar full albums por engano
+        "--match-filter", "duration < 900 & !is_live",
         "--extractor-args", "youtube:player_client=android",
         "--output", str(caminho_saida),
         "--download-archive", str(arquivo_historico),
@@ -83,12 +85,17 @@ def varrer_biblioteca(caminho_raiz: Path):
     if not verificar_armazenamento(caminho_raiz):
         return
 
+    try:
+        ytmusic = YTMusic()
+    except Exception:
+        ytmusic = None
+
     pastas_artistas = sorted([p for p in caminho_raiz.iterdir() if p.is_dir() and not p.name.startswith('.') and p.name.lower() != 'lost+found'])
 
     total_artistas = len(pastas_artistas)
     total_albuns_geral = sum(len([p for p in art.iterdir() if p.is_dir() and not p.name.startswith('.')]) for art in pastas_artistas)
     
-    print(f"=== Sincronizador v3.2 (Cookie-Free Android Engine) ===")
+    print(f"=== Sincronizador v3.3 (Anti-Full Album & Track-by-Track Engine) ===")
     print(f"📊 Total encontrado: {total_artistas} artistas | {total_albuns_geral} álbuns/pastas.\n")
 
     album_contador = 0
@@ -112,12 +119,37 @@ def varrer_biblioteca(caminho_raiz: Path):
             if len(arquivos_locais) >= 3:
                 continue
 
-            print(f"  [{album_contador}/{total_albuns_geral}] 📥 Baixando faltando em: {titulo_album} ({len(arquivos_locais)} arquivos locais)")
+            print(f"  [{album_contador}/{total_albuns_geral}] 📥 Sincronizando faixas em: {titulo_album} ({len(arquivos_locais)} arquivos locais)")
             arquivo_historico = pasta_album / ".downloaded.txt"
 
-            termo_busca = f"ytsearch5:{nome_artista} {titulo_album} audio"
-            caminho_saida = pasta_album / "%(autonumber)s - %(title)s.%(ext)s"
-            baixar_faixa_cli(termo_busca, caminho_saida, arquivo_historico, nome_artista, titulo_album)
+            # Tenta consultar faixas oficiais pelo ytmusicapi para baixar uma a uma limpinhas
+            faixas_baixadas = False
+            if ytmusic:
+                try:
+                    res = ytmusic.search(f"{nome_artista} {titulo_album}", filter="albums", limit=1)
+                    if res:
+                        browse_id = res[0].get("browseId")
+                        detalhes = ytmusic.get_album(browse_id)
+                        tracks = detalhes.get("tracks", [])
+                        if tracks:
+                            print(f"    [i] Tracklist oficial encontrada ({len(tracks)} faixas). Baixando separadamente...")
+                            for i, t in enumerate(tracks, start=1):
+                                t_nome = t.get("title", "")
+                                nome_arq = sanitizar_nome_sistema(f"{i:02d} - {t_nome}")
+                                caminho_saida = pasta_album / f"{nome_arq}.%(ext)s"
+                                # Busca faixa individual com exclusão estrita de full albums
+                                termo_faixa = f"ytsearch1:{nome_artista} {titulo_album} {t_nome} audio -full -album -live"
+                                baixar_faixa_cli(termo_faixa, caminho_saida, arquivo_historico, nome_artista, titulo_album)
+                            faixas_baixadas = True
+                except Exception:
+                    pass
+
+            # Fallback caso a API do ytmusicapi falhe: usa o ytsearch com filtro rigoroso anti-full album
+            if not faixas_baixadas:
+                print(f"    [+] Buscando faixas avulsas para '{titulo_album}'...")
+                termo_busca = f"ytsearch12:{nome_artista} {titulo_album} song audio -full -album -live"
+                caminho_saida = pasta_album / "%(autonumber)s - %(title)s.%(ext)s"
+                baixar_faixa_cli(termo_busca, caminho_saida, arquivo_historico, nome_artista, titulo_album)
 
         print("-" * 60)
 
