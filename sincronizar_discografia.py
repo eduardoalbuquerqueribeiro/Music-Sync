@@ -1,14 +1,13 @@
-import ctypes
 import json
 import os
 import re
+import subprocess
 import sys
 import unicodedata
 import urllib.request
 from difflib import SequenceMatcher
 from pathlib import Path
 from ytmusicapi import YTMusic
-import yt_dlp
 
 PASTA_SCRIPT = Path(__file__).parent
 ARQUIVO_COOKIES = PASTA_SCRIPT / "cookies.txt"
@@ -26,20 +25,21 @@ def carregar_config_local() -> dict:
     return {}
 
 
-def salvar_config_local(caminho_musicas: str, navegador: str):
+def salvar_config_local(caminho_musicas: str):
     try:
         with open(ARQUIVO_CONFIG_LOCAL, "w", encoding="utf-8") as f:
-            json.dump({"caminho_musicas": caminho_musicas, "navegador_cookies": navegador}, f, indent=2, ensure_ascii=False)
+            json.dump({"caminho_musicas": caminho_musicas}, f, indent=2, ensure_ascii=False)
     except Exception:
         pass
 
 
-def escolher_navegador(navegador_salvo: str) -> str:
-    print("\n🌐 AUTENTICAÇÃO DO YOUTUBE")
-    print("   [1] Google Chrome / Brave / Chromium")
-    print("   [2] Sem navegador (Modo padrão)")
-    escolha = input("\nEscolha [1-2] (Padrão: 1): ").strip()
-    return "chrome" if escolha != "2" else "nenhum"
+def verificar_dependencias():
+    """Garante que ferramentas essenciais do sistema estão instaladas."""
+    for cmd in ["yt-dlp", "ffmpeg"]:
+        if subprocess.run(["which", cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
+            print(f"[❌] Erro crítico: A ferramenta '{cmd}' não foi encontrada no sistema.")
+            print(f"     Instale com: sudo dnf install {cmd} (ou equivalente)")
+            sys.exit(1)
 
 
 def verificar_armazenamento(caminho_alvo: Path) -> bool:
@@ -148,6 +148,37 @@ def obter_dados_e_albuns_artista(ytmusic: YTMusic, nome_artista: str, pasta_arti
         return []
 
 
+def baixar_faixa_via_cli(alvo: str, caminho_saida: Path, arquivo_historico: Path, metadata: dict) -> bool:
+    """Executa o yt-dlp diretamente via terminal (subprocesso CLI), eliminando conflitos de socket Python."""
+    cmd = [
+        "yt-dlp",
+        "--extract-audio",
+        "--audio-format", "mp3",
+        "--audio-quality", "320K",
+        "--embed-thumbnail",
+        "--add-metadata",
+        "--force-ipv4",
+        "--no-playlist",
+        "--output", str(caminho_saida),
+        "--download-archive", str(arquivo_historico),
+    ]
+
+    if ARQUIVO_COOKIES.exists():
+        cmd.extend(["--cookiefile", str(ARQUIVO_COOKIES)])
+
+    # Metadados injetados via CLI
+    cmd.extend([
+        "--parse-metadata", f":(?P<artist>{metadata['artist']})",
+        "--parse-metadata", f":(?P<album>{metadata['album']})",
+        "--parse-metadata", f":(?P<date>{metadata['year']})",
+    ])
+
+    cmd.append(alvo)
+
+    resultado = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    return resultado.returncode == 0
+
+
 def baixar_album(ytmusic: YTMusic, album_resumo: dict, pasta_album: Path, nome_artista: str):
     browse_id = album_resumo.get("browseId")
     titulo_album = album_resumo.get("title", "Álbum Desconhecido")
@@ -179,48 +210,33 @@ def baixar_album(ytmusic: YTMusic, album_resumo: dict, pasta_album: Path, nome_a
     print(f"    [+] Baixando {len(faixas_faltantes)} faixa(s) de '{titulo_album}' -> {pasta_album.name}")
     arquivo_historico = pasta_album / ".downloaded.txt"
 
+    metadata = {
+        "artist": nome_artista,
+        "album": titulo_album,
+        "year": str(ano_album)
+    }
+
     for idx, faixa in faixas_faltantes:
         titulo_faixa = faixa.get("title", f"Faixa {idx}")
         nome_arq = sanitizar_nome_sistema(f"{idx:02d} - {titulo_faixa}")
         caminho_saida = pasta_album / f"{nome_arq}.%(ext)s"
 
         video_id = faixa.get("videoId")
-        alvo_download = f"https://music.youtube.com/watch?v={video_id}" if video_id else f"ytsearch1:{nome_artista} - {titulo_faixa} audio"
-
         print(f"      [↓] Baixando: {nome_arq}...")
 
-        ydl_opts = {
-            'format': 'ba/b',
-            'outtmpl': str(caminho_saida),
-            'download_archive': str(arquivo_historico),
-            'quiet': True,
-            'no_warnings': True,
-            'ignoreerrors': True,
-            'writethumbnail': True,
-            'force_ipv4': True,
-            # Contorna o socket SSL do Python 3.14 usando cliente web padrão do yt-dlp sem requests complexos
-            'extractor_args': {'youtube': {'player_client': ['web']}},
-            'postprocessors': [
-                {'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '320'},
-                {'key': 'EmbedThumbnail'},
-                {'key': 'FFmpegMetadata', 'add_metadata': True},
-            ],
-            'postprocessor_args': [
-                '-metadata', f'artist={nome_artista}',
-                '-metadata', f'album={titulo_album}',
-                '-metadata', f'track={idx}/{len(faixas)}',
-                '-metadata', f'date={ano_album}',
-            ],
-        }
+        sucesso = False
+        # Tentativa 1: Link direto do YouTube Music
+        if video_id:
+            alvo_direto = f"https://music.youtube.com/watch?v={video_id}"
+            sucesso = baixar_faixa_via_cli(alvo_direto, caminho_saida, arquivo_historico, metadata)
 
-        if ARQUIVO_COOKIES.exists():
-            ydl_opts['cookiefile'] = str(ARQUIVO_COOKIES)
+        # Tentativa 2 (Fallback): Busca textual limpa no YouTube se a tentativa 1 falhou
+        if not sucesso:
+            alvo_busca = f"ytsearch1:{nome_artista} - {titulo_faixa} audio"
+            sucesso = baixar_faixa_via_cli(alvo_busca, caminho_saida, arquivo_historico, metadata)
 
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([alvo_download])
-        except Exception as e:
-            print(f"      [❌] Falha ao baixar '{titulo_faixa}': {type(e).__name__} - {e}")
+        if not sucesso:
+            print(f"      [❌] Falha ao baixar a faixa '{titulo_faixa}'.")
 
 
 def varrer_biblioteca(caminho_raiz: Path):
@@ -260,11 +276,21 @@ def varrer_biblioteca(caminho_raiz: Path):
 
 
 if __name__ == "__main__":
-    print("=== Sincronizador v7.0 (Python 3.14 SSL Socket Bypass) ===")
+    print("=== Sincronizador v1.7 (Punk Subprocess CLI Engine) ===")
+    verificar_dependencias()
     config = carregar_config_local()
-    nav = escolher_navegador(config.get("navegador_cookies", ""))
-    caminho = config.get("caminho_musicas", "") or input("\nCaminho da pasta de músicas: ").strip()
-    if caminho:
-        diretorio = Path(caminho.strip('\'"')).expanduser().resolve()
-        salvar_config_local(str(diretorio), nav)
+    caminho_salvo = config.get("caminho_musicas", "")
+
+    if caminho_salvo:
+        print(f"📂 Caminho salvo anteriormente: {caminho_salvo}")
+        entrada = input("Pressione [ENTER] para usar o caminho salvo ou digite outro: ").strip()
+        caminho_final = entrada if entrada else caminho_salvo
+    else:
+        caminho_final = input("📂 Digite o caminho completo da sua pasta de músicas: ").strip()
+
+    if not caminho_final:
+        print("[❌] Nenhum caminho informado. Encerrando.")
+    else:
+        diretorio = Path(caminho_final.strip('\'"')).expanduser().resolve()
+        salvar_config_local(str(diretorio))
         varrer_biblioteca(diretorio)
