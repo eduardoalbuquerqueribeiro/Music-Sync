@@ -53,6 +53,31 @@ def sanitizar_nome_sistema(nome: str) -> str:
     return re.sub(r'[<>:"/\\|?*]', '-', nome).strip('. ')
 
 
+def limpar_arquivos_full_album(caminho_raiz: Path):
+    print("🧹 [FASE 1] Varrendo biblioteca em busca de arquivos indesejados 'full album'...")
+    removidos = 0
+    
+    for caminho_arquivo in caminho_raiz.rglob("*"):
+        if caminho_arquivo.is_file() and caminho_arquivo.suffix.lower() in EXTENSOES_AUDIO:
+            nome_arq_lower = caminho_arquivo.name.lower()
+            
+            # Critérios para identificar um full album indesejado pelo nome
+            padroes_proibidos = ["full album", "full_album", "album completo", "full-album", "fullset", "full set"]
+            if any(p in nome_arq_lower for p in padroes_proibidos):
+                try:
+                    caminho_arquivo.unlink()
+                    print(f"  [🗑️ Apagado] {caminho_arquivo.relative_to(caminho_raiz)}")
+                    removidos += 1
+                    continue
+                except Exception as e:
+                    print(f"  [!] Erro ao apagar {caminho_arquivo.name}: {e}")
+
+            # Opcional: Se o arquivo for anormalmente grande para uma única música (ex: > 45MB e duração implícita por tamanho),
+            # mas o filtro de nome já pega 99% dos casos de full albums baixados por engano.
+            
+    print(f"🧹 Faxina concluída! Total de arquivos 'full album' removidos: {removidos}\n")
+
+
 def baixar_faixa_cli(termo_busca: str, caminho_saida: Path, arquivo_historico: Path, nome_artista: str, titulo_album: str) -> bool:
     cmd = [
         "yt-dlp",
@@ -63,8 +88,7 @@ def baixar_faixa_cli(termo_busca: str, caminho_saida: Path, arquivo_historico: P
         "--add-metadata",
         "--force-ipv4",
         "--no-playlist",
-        # Garante que o yt-dlp rejeite vídeos longos (> 15 minutos) para nunca baixar full albums por engano
-        "--match-filter", "duration < 900 & !is_live",
+        "--match-filter", "duration < 900 & !is_live",  # Rejeita vídeos com mais de 15 minutos ou lives
         "--extractor-args", "youtube:player_client=android",
         "--output", str(caminho_saida),
         "--download-archive", str(arquivo_historico),
@@ -85,6 +109,9 @@ def varrer_biblioteca(caminho_raiz: Path):
     if not verificar_armazenamento(caminho_raiz):
         return
 
+    # Executa a limpeza antes de tudo
+    limpar_arquivos_full_album(caminho_raiz)
+
     try:
         ytmusic = YTMusic()
     except Exception:
@@ -95,7 +122,7 @@ def varrer_biblioteca(caminho_raiz: Path):
     total_artistas = len(pastas_artistas)
     total_albuns_geral = sum(len([p for p in art.iterdir() if p.is_dir() and not p.name.startswith('.')]) for art in pastas_artistas)
     
-    print(f"=== Sincronizador v3.3 (Anti-Full Album & Track-by-Track Engine) ===")
+    print(f"=== [FASE 2] Sincronizador v3.4 (Clean & Track-by-Track Engine) ===")
     print(f"📊 Total encontrado: {total_artistas} artistas | {total_albuns_geral} álbuns/pastas.\n")
 
     album_contador = 0
@@ -122,7 +149,6 @@ def varrer_biblioteca(caminho_raiz: Path):
             print(f"  [{album_contador}/{total_albuns_geral}] 📥 Sincronizando faixas em: {titulo_album} ({len(arquivos_locais)} arquivos locais)")
             arquivo_historico = pasta_album / ".downloaded.txt"
 
-            # Tenta consultar faixas oficiais pelo ytmusicapi para baixar uma a uma limpinhas
             faixas_baixadas = False
             if ytmusic:
                 try:
@@ -137,14 +163,12 @@ def varrer_biblioteca(caminho_raiz: Path):
                                 t_nome = t.get("title", "")
                                 nome_arq = sanitizar_nome_sistema(f"{i:02d} - {t_nome}")
                                 caminho_saida = pasta_album / f"{nome_arq}.%(ext)s"
-                                # Busca faixa individual com exclusão estrita de full albums
                                 termo_faixa = f"ytsearch1:{nome_artista} {titulo_album} {t_nome} audio -full -album -live"
                                 baixar_faixa_cli(termo_faixa, caminho_saida, arquivo_historico, nome_artista, titulo_album)
                             faixas_baixadas = True
                 except Exception:
                     pass
 
-            # Fallback caso a API do ytmusicapi falhe: usa o ytsearch com filtro rigoroso anti-full album
             if not faixas_baixadas:
                 print(f"    [+] Buscando faixas avulsas para '{titulo_album}'...")
                 termo_busca = f"ytsearch12:{nome_artista} {titulo_album} song audio -full -album -live"
@@ -153,7 +177,7 @@ def varrer_biblioteca(caminho_raiz: Path):
 
         print("-" * 60)
 
-    print("\n✨ Varredura e Sincronização concluídas com sucesso!")
+    print("\n✨ Faxina, Varredura e Sincronização concluídas com sucesso!")
 
 
 if __name__ == "__main__":
