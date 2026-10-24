@@ -54,33 +54,6 @@ def sanitizar_nome_sistema(nome: str) -> str:
     return re.sub(r'[<>:"/\\|?*]', '-', nome).strip('. ')
 
 
-def normalizar_para_comparacao(texto: str, remover_numeros_faixa: bool = False) -> str:
-    texto = unicodedata.normalize('NFKD', texto)
-    texto = ''.join(c for c in texto if not unicodedata.combining(c)).lower()
-    if remover_numeros_faixa:
-        texto = re.sub(r'^\s*(\d+[\-\.\s_]+)+', '', texto)
-    texto = re.sub(r'[\(\[\-\s]*(19\d{2}|20\d{2})[\)\]\-\s]*', ' ', texto)
-    for t in ['deluxe edition', 'deluxe version', 'deluxe', 'remastered', 'remaster', 'expanded edition']:
-        texto = re.sub(rf'[\(\[\-\s]*{t}[\)\]\-\s]*', ' ', texto)
-    return re.sub(r'\s+', ' ', re.sub(r'[^a-z0-9\s]', ' ', texto)).strip()
-
-
-def faixa_ja_existe_na_pasta(titulo_faixa: str, idx: int, arquivos_audio_locais: list[str]) -> bool:
-    alvo_norm = normalizar_para_comparacao(titulo_faixa, remover_numeros_faixa=True)
-    for nome_arq in arquivos_audio_locais:
-        arq_norm = normalizar_para_comparacao(nome_arq, remover_numeros_faixa=True)
-        if not arq_norm:
-            continue
-        if alvo_norm and (alvo_norm == arq_norm or (len(alvo_norm) >= 4 and (alvo_norm in arq_norm or arq_norm in alvo_norm))):
-            return True
-        if re.match(rf'^0?{idx}[\s\.\-_]', nome_arq) and SequenceMatcher(None, alvo_norm, arq_norm).ratio() >= 0.55:
-            return True
-    return False
-
-
-from difflib import SequenceMatcher
-
-
 def baixar_faixa_cli(termo_busca: str, caminho_saida: Path, arquivo_historico: Path, nome_artista: str, titulo_album: str) -> bool:
     cmd = [
         "yt-dlp",
@@ -91,13 +64,12 @@ def baixar_faixa_cli(termo_busca: str, caminho_saida: Path, arquivo_historico: P
         "--add-metadata",
         "--force-ipv4",
         "--no-playlist",
-        # Removido o --quiet para você ver o yt-dlp conversando na tela em tempo real!
         "--output", str(caminho_saida),
         "--download-archive", str(arquivo_historico),
     ]
 
     if ARQUIVO_COOKIES.exists():
-        cmd.extend(["--cookiefile", str(ARQUIVO_COOKIES)])
+        cmd.extend(["--cookies", str(ARQUIVO_COOKIES)])
 
     cmd.extend([
         "--parse-metadata", f":(?P<artist>{nome_artista})",
@@ -114,18 +86,20 @@ def varrer_biblioteca(caminho_raiz: Path):
     if not verificar_armazenamento(caminho_raiz):
         return
 
-    try:
-        ytmusic = YTMusic()
-    except Exception:
-        ytmusic = None
-
     pastas_artistas = sorted([p for p in caminho_raiz.iterdir() if p.is_dir() and not p.name.startswith('.') and p.name.lower() != 'lost+found'])
 
-    print(f"=== Iniciando Sincronização Inteligente v2.1 ({len(pastas_artistas)} artistas encontrados) ===\n")
+    # Mapeamento total para contagem de progresso
+    total_artistas = len(pastas_artistas)
+    total_albuns_geral = sum(len([p for p in art.iterdir() if p.is_dir() and not p.name.startswith('.')]) for art in pastas_artistas)
+    
+    print(f"=== Sincronizador v2.3 (Live Progress Engine) ===")
+    print(f"📊 Total encontrado: {total_artistas} artistas | {total_albuns_geral} álbuns/pastas.\n")
 
-    for pasta_artista in pastas_artistas:
+    album_contador = 0
+
+    for idx_art, pasta_artista in enumerate(pastas_artistas, start=1):
         nome_artista = pasta_artista.name
-        print(f"\n► Banda/Artista: [{nome_artista}]")
+        print(f"\n[{idx_art}/{total_artistas}] 🎸 Banda/Artista: [{nome_artista}]")
 
         pastas_albuns = [p for p in pasta_artista.iterdir() if p.is_dir() and not p.name.startswith('.')]
         if not pastas_albuns:
@@ -134,23 +108,27 @@ def varrer_biblioteca(caminho_raiz: Path):
             continue
 
         for pasta_album in pastas_albuns:
+            album_contador += 1
             titulo_album = pasta_album.name
-            print(f"  📁 Analisando Pasta: {titulo_album}")
+            
+            arquivos_locais = [f for f in pasta_album.iterdir() if f.is_file() and f.suffix.lower() in EXTENSOES_AUDIO]
+            
+            if len(arquivos_locais) >= 3:
+                continue
 
+            print(f"  [{album_contador}/{total_albuns_geral}] 📥 Baixando faltando em: {titulo_album} ({len(arquivos_locais)} arquivos locais)")
             arquivo_historico = pasta_album / ".downloaded.txt"
-            arquivos_locais = [f.stem for f in pasta_album.iterdir() if f.is_file() and f.suffix.lower() in EXTENSOES_AUDIO]
 
-            # Dispara busca de completude do álbum caso tenha menos de 3 músicas ou se desejar forçar
-            print(f"    [+] Sincronizando e buscando faixas para '{titulo_album}'...")
             termo_busca = f"ytsearch12:{nome_artista} {titulo_album} full album audio"
             caminho_saida = pasta_album / "%(autonumber)s - %(title)s.%(ext)s"
             baixar_faixa_cli(termo_busca, caminho_saida, arquivo_historico, nome_artista, titulo_album)
 
         print("-" * 60)
 
+    print("\n✨ Varredura e Sincronização concluídas com sucesso!")
+
 
 if __name__ == "__main__":
-    print("=== Sincronizador v2.1 (Verbose CLI Engine) ===")
     verificar_dependencias()
     config = carregar_config_local()
     caminho_salvo = config.get("caminho_musicas", "")
