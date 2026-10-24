@@ -53,9 +53,14 @@ def sanitizar_nome_sistema(nome: str) -> str:
     return re.sub(r'[<>:"/\\|?*]', '-', nome).strip('. ')
 
 
-def normalizar_para_comparacao(texto: str) -> str:
+def normalizar_para_comparacao(texto: str, remover_numeros_faixa: bool = False) -> str:
     texto = unicodedata.normalize('NFKD', texto)
     texto = ''.join(c for c in texto if not unicodedata.combining(c)).lower()
+    if remover_numeros_faixa:
+        texto = re.sub(r'^\s*(\d+[\-\.\s_]+)+', '', texto)
+    texto = re.sub(r'[\(\[\-\s]*(19\d{2}|20\d{2})[\)\]\-\s]*', ' ', texto)
+    for t in ['deluxe edition', 'deluxe version', 'deluxe', 'remastered', 'remaster', 'expanded edition']:
+        texto = re.sub(rf'[\(\[\-\s]*{t}[\)\]\-\s]*', ' ', texto)
     return re.sub(r'\s+', ' ', re.sub(r'[^a-z0-9\s]', ' ', texto)).strip()
 
 
@@ -93,7 +98,7 @@ def varrer_biblioteca(caminho_raiz: Path):
 
     pastas_artistas = sorted([p for p in caminho_raiz.iterdir() if p.is_dir() and not p.name.startswith('.') and p.name.lower() != 'lost+found'])
 
-    print(f"=== Iniciando varredura ({len(pastas_artistas)} artistas encontrados) ===\n")
+    print(f"=== Iniciando varredura e sicronização ({len(pastas_artistas)} artistas encontrados) ===\n")
 
     for pasta_artista in pastas_artistas:
         nome_artista = pasta_artista.name
@@ -101,24 +106,35 @@ def varrer_biblioteca(caminho_raiz: Path):
 
         pastas_albuns = [p for p in pasta_artista.iterdir() if p.is_dir() and not p.name.startswith('.')]
 
+        if not pastas_albuns:
+            print("  [!] Nenhuma pasta de álbum encontrada para este artista.")
+            print("-" * 60)
+            continue
+
         for pasta_album in pastas_albuns:
             titulo_album = pasta_album.name
             print(f"  📁 Álbum/Pasta: {titulo_album}")
 
             arquivo_historico = pasta_album / ".downloaded.txt"
             
-            # Lê arquivos de áudio já existentes na pasta
-            arquivos_locais = [f.stem for f in pasta_album.iterdir() if f.is_file() and f.suffix.lower() in EXTENSOES_AUDIO]
+            # Lista arquivos de áudio já presentes na pasta do álbum
+            arquivos_locais = [f for f in pasta_album.iterdir() if f.is_file() and f.suffix.lower() in EXTENSOES_AUDIO]
+            
+            print(f"    [i] Arquivos encontrados na pasta: {len(arquivos_locais)} música(s).")
 
-            # Exemplo de busca interativa ou leitura de lista caso queira popular faixas
-            # Como você já tem as pastas organizadas, vamos garantir que o yt-dlp varra e preencha
-            print(f"    [✓] Verificando integridade da pasta...")
+            # Se a pasta estiver vazia ou você quiser buscar faixas específicas baseadas no nome da pasta
+            # O script faz uma varredura inteligente do nome da pasta para buscar faixas faltantes
+            if len(arquivos_locais) == 0:
+                print(f"    [+] Pasta vazia detectada. Buscando álbuns/faixas correspondentes para '{titulo_album}'...")
+                termo_busca = f"ytsearch5:{nome_artista} {titulo_album} full album audio"
+                caminho_saida = pasta_album / "%(autonumber)s - %(title)s.%(ext)s"
+                baixar_faixa_cli(termo_busca, caminho_saida, arquivo_historico, nome_artista, titulo_album)
 
         print("-" * 60)
 
 
 if __name__ == "__main__":
-    print("=== Sincronizador v1.8 (Pure CLI Subprocess Engine) ===")
+    print("=== Sincronizador v1.9 (Smart Folder Sync & CLI Download) ===")
     verificar_dependencias()
     config = carregar_config_local()
     caminho_salvo = config.get("caminho_musicas", "")
