@@ -10,14 +10,9 @@ from pathlib import Path
 from ytmusicapi import YTMusic
 import yt_dlp
 
-# =====================================================================
-# CONFIGURAÇÕES
-# =====================================================================
-
 PASTA_SCRIPT = Path(__file__).parent
 ARQUIVO_COOKIES = PASTA_SCRIPT / "cookies.txt"
 ARQUIVO_CONFIG_LOCAL = PASTA_SCRIPT / ".config_local.json"
-
 EXTENSOES_AUDIO = {".mp3", ".flac", ".m4a", ".ogg", ".opus", ".wav", ".wma"}
 
 
@@ -32,10 +27,9 @@ def carregar_config_local() -> dict:
 
 
 def salvar_config_local(caminho_musicas: str, navegador: str):
-    dados = {"caminho_musicas": caminho_musicas, "navegador_cookies": navegador}
     try:
         with open(ARQUIVO_CONFIG_LOCAL, "w", encoding="utf-8") as f:
-            json.dump(dados, f, indent=2, ensure_ascii=False)
+            json.dump({"caminho_musicas": caminho_musicas, "navegador_cookies": navegador}, f, indent=2, ensure_ascii=False)
     except Exception:
         pass
 
@@ -43,27 +37,20 @@ def salvar_config_local(caminho_musicas: str, navegador: str):
 def escolher_navegador(navegador_salvo: str) -> str:
     print("\n🌐 AUTENTICAÇÃO DO YOUTUBE")
     print("   [1] Google Chrome / Brave / Chromium (Via cookies.txt na pasta)")
-    print("   [2] Sem navegador (Usar clientes públicos do yt-dlp)")
-    
+    print("   [2] Sem navegador (Clientes públicos do yt-dlp)")
     escolha = input("\nEscolha [1-2] (Padrão: 1): ").strip()
     return "chrome" if escolha != "2" else "nenhum"
 
 
 def obter_config_cookies_navegador(navegador: str) -> tuple | None:
-    if ARQUIVO_COOKIES.exists():
-        return None  # Se houver cookies.txt, o yt-dlp lê via cookiefile nativo
-    if not navegador or navegador == "nenhum":
+    if ARQUIVO_COOKIES.exists() or not navegador or navegador == "nenhum":
         return None
-
     if sys.platform.startswith("linux"):
         home = Path.home()
-        caminhos_linux = {
-            "chrome": (home / ".config/google-chrome", home / ".var/app/com.google.Chrome/config/google-chrome"),
-        }
-        nativo, flatpak = caminhos_linux.get(navegador, (None, None))
-        if nativo and not nativo.exists() and flatpak and flatpak.exists():
+        nativo = home / ".config/google-chrome"
+        flatpak = home / ".var/app/com.google.Chrome/config/google-chrome"
+        if not nativo.exists() and flatpak.exists():
             return (navegador, str(flatpak))
-
     return (navegador,)
 
 
@@ -89,8 +76,7 @@ def normalizar_para_comparacao(texto: str, remover_numeros_faixa: bool = False) 
     if remover_numeros_faixa:
         texto = re.sub(r'^\s*(\d+[\-\.\s_]+)+', '', texto)
     texto = re.sub(r'[\(\[\-\s]*(19\d{2}|20\d{2})[\)\]\-\s]*', ' ', texto)
-    termos = ['deluxe edition', 'deluxe version', 'deluxe', 'remastered', 'remaster', 'expanded edition']
-    for t in termos:
+    for t in ['deluxe edition', 'deluxe version', 'deluxe', 'remastered', 'remaster', 'expanded edition']:
         texto = re.sub(rf'[\(\[\-\s]*{t}[\)\]\-\s]*', ' ', texto)
     return re.sub(r'\s+', ' ', re.sub(r'[^a-z0-9\s]', ' ', texto)).strip()
 
@@ -181,7 +167,8 @@ def montar_opcoes_ytdlp(
     navegador_escolhido: str
 ) -> dict:
     ydl_opts = {
-        'format': 'bestaudio/best',
+        # 'bestaudio' aceita qualquer stream de áudio disponível, evitando o erro de formato indisponível
+        'format': 'bestaudio',
         'outtmpl': str(caminho_saida),
         'download_archive': str(arquivo_historico),
         'quiet': True,
@@ -190,7 +177,6 @@ def montar_opcoes_ytdlp(
         'writethumbnail': True,
         'sleep_interval': 1,
         'max_sleep_interval': 3,
-        # Usa clientes alternativos do yt-dlp para contornar assinaturas bot
         'extractor_args': {'youtube': {'player_client': ['ios', 'web']}},
         'postprocessors': [
             {'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '320'},
@@ -305,7 +291,7 @@ def varrer_biblioteca(caminho_raiz: Path, navegador_escolhido: str):
 
 
 if __name__ == "__main__":
-    print("=== Sincronizador v3.4 (iOS/Web Bypass & Cookies File Support) ===")
+    print("=== Sincronizador v3.5 (Flexible Bestaudio Format) ===")
     config = carregar_config_local()
     nav = escolher_navegador(config.get("navegador_cookies", ""))
     caminho = config.get("caminho_musicas", "") or input("\nCaminho da pasta de músicas: ").strip()
