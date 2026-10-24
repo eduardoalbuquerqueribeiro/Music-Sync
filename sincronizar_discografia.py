@@ -36,7 +36,7 @@ def salvar_config_local(caminho_musicas: str, navegador: str):
 
 def escolher_navegador(navegador_salvo: str) -> str:
     print("\n🌐 AUTENTICAÇÃO DO YOUTUBE")
-    print("   [1] Google Chrome / Brave / Chromium (Via cookies.txt se houver)")
+    print("   [1] Google Chrome / Brave / Chromium")
     print("   [2] Sem navegador (Modo padrão)")
     escolha = input("\nEscolha [1-2] (Padrão: 1): ").strip()
     return "chrome" if escolha != "2" else "nenhum"
@@ -144,36 +144,6 @@ def obter_dados_e_albuns_artista(ytmusic: YTMusic, nome_artista: str, pasta_arti
     return secao_albuns.get("results", [])
 
 
-def montar_opcoes_ytdlp(caminho_saida: Path, arquivo_historico: Path, nome_artista: str, titulo_album: str, idx: int, total_faixas: int, ano_album: str) -> dict:
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': str(caminho_saida),
-        'download_archive': str(arquivo_historico),
-        'quiet': True,
-        'no_warnings': True,
-        'ignoreerrors': True,
-        'writethumbnail': True,
-        'sleep_interval': 1,
-        'max_sleep_interval': 3,
-        'postprocessors': [
-            {'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '320'},
-            {'key': 'EmbedThumbnail'},
-            {'key': 'FFmpegMetadata', 'add_metadata': True},
-        ],
-        'postprocessor_args': [
-            '-metadata', f'artist={nome_artista}',
-            '-metadata', f'album={titulo_album}',
-            '-metadata', f'track={idx}/{total_faixas}',
-            '-metadata', f'date={ano_album}',
-        ],
-    }
-
-    if ARQUIVO_COOKIES.exists():
-        ydl_opts['cookiefile'] = str(ARQUIVO_COOKIES)
-
-    return ydl_opts
-
-
 def baixar_album(ytmusic: YTMusic, album_resumo: dict, pasta_album: Path, nome_artista: str):
     browse_id = album_resumo.get("browseId")
     titulo_album = album_resumo.get("title", "Álbum Desconhecido")
@@ -209,16 +179,43 @@ def baixar_album(ytmusic: YTMusic, album_resumo: dict, pasta_album: Path, nome_a
         titulo_faixa = faixa.get("title", f"Faixa {idx}")
         nome_arq = sanitizar_nome_sistema(f"{idx:02d} - {titulo_faixa}")
         caminho_saida = pasta_album / f"{nome_arq}.%(ext)s"
-        
-        # Estratégia infalível: Busca textual direta pelo ytsearch do yt-dlp
-        termo_busca = f"ytsearch1:{nome_artista} - {titulo_faixa} official audio"
+
+        # Usa o ID oficial retornado pelo ytmusicapi se houver, senão faz busca por texto
+        video_id = faixa.get("videoId")
+        alvo_download = f"https://music.youtube.com/watch?v={video_id}" if video_id else f"ytsearch1:{nome_artista} - {titulo_faixa} audio"
+
         print(f"      [↓] Baixando: {nome_arq}...")
 
-        ydl_opts = montar_opcoes_ytdlp(caminho_saida, arquivo_historico, nome_artista, titulo_album, idx, len(faixas), ano_album)
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'outtmpl': str(caminho_saida),
+            'download_archive': str(arquivo_historico),
+            'quiet': True,
+            'no_warnings': True,
+            'ignoreerrors': True,
+            'writethumbnail': True,
+            'impersonate': 'chrome',  # Mascara o yt-dlp como Google Chrome real para evitar bloqueios de formato
+            'postprocessors': [
+                {'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '320'},
+                {'key': 'EmbedThumbnail'},
+                {'key': 'FFmpegMetadata', 'add_metadata': True},
+            ],
+            'postprocessor_args': [
+                '-metadata', f'artist={nome_artista}',
+                '-metadata', f'album={titulo_album}',
+                '-metadata', f'track={idx}/{len(faixas)}',
+                '-metadata', f'date={ano_album}',
+            ],
+        }
+
+        if ARQUIVO_COOKIES.exists():
+            ydl_opts['cookiefile'] = str(ARQUIVO_COOKIES)
+
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([termo_busca])
-        except Exception:
+                ydl.download([alvo_download])
+        except Exception as e:
+            print(f"      [!] Aviso ao baixar '{titulo_faixa}': {e}")
             pass
 
 
@@ -259,7 +256,7 @@ def varrer_biblioteca(caminho_raiz: Path):
 
 
 if __name__ == "__main__":
-    print("=== Sincronizador v4.0 (Smart ytsearch Bypass) ===")
+    print("=== Sincronizador v4.1 (Impersonate Chrome & Safe Exception Handling) ===")
     config = carregar_config_local()
     nav = escolher_navegador(config.get("navegador_cookies", ""))
     caminho = config.get("caminho_musicas", "") or input("\nCaminho da pasta de músicas: ").strip()
