@@ -1,13 +1,14 @@
 # 🎵 Music-Sync — Sincronizador Automático de Discografias
 
-Script em Python (compatível com **Linux**, **Windows** e **macOS**) que varre a sua pasta de músicas, identifica as pastas de bandas/artistas, busca toda a discografia oficial no YouTube Music e baixa automaticamente os álbuns que estiverem faltando em **MP3 (320 kbps)** já com os metadados (artista, álbum, número da faixa e ano).
+Script em Python (compatível com **Linux**, **Windows** e **macOS**) que varre a sua pasta de músicas, identifica as pastas de bandas/artistas, busca toda a discografia oficial no YouTube Music e baixa automaticamente os álbuns que estiverem faltando em **MP3 (320 kbps)** já com metadados completos e **capas de álbum/artista**.
 
 ## ✨ Funcionalidades
 
-- **Suporte Multi-Navegador (Chrome, Firefox, Safari, Brave, Edge):** Pergunta em qual navegador você está logado no YouTube para autenticar automaticamente e evitar bloqueios de bot (`Sign in to confirm you're not a bot`) ou restrição de idade (+18). Detecta inclusive navegadores instalados via Flatpak no Linux.
-- **Memória Local Inteligente:** Salva o caminho da sua pasta de músicas e o seu navegador preferido localmente (em `.config_local.json`, ignorado pelo Git) para que nas próximas execuções você só precise apertar ENTER.
-- **Detecção de HD Externo e Montagem:** Verifica automaticamente se o caminho apontado fica em um HD externo, partição secundária ou disco local, avisando caso o disco esteja desconectado ou desmontado.
-- **Varredura Inteligente de Álbuns:** Analisa os nomes das pastas que você já tem ignorando anos, símbolos ou termos extras (evitando downloads duplicados).
+- **Download Automático de Capas (`cover.jpg` e `artist.jpg`):** Baixa a foto oficial da banda em alta resolução (`artist.jpg`) na pasta do artista, salva a capa oficial (`cover.jpg`) dentro de cada álbum (inclusive nos álbuns que você já tinha!) e embute a capa nos arquivos MP3.
+- **Reconhecimento Inteligente de Músicas e Álbuns (*Fuzzy Matching*):** Não importa se os seus álbuns ou músicas atuais estão numerados ou não, ou se têm textos como `[2025]` ou `(Deluxe)` — o script reconhece as faixas que você já tem (em `.mp3`, `.flac`, `.m4a`, etc.) e baixa apenas o que estiver realmente faltando.
+- **Suporte Multi-Navegador (Chrome, Firefox, Safari, Brave, Edge):** Autentica via cookies para evitar bloqueios de bot e restrição de idade (+18).
+- **Memória Local Inteligente:** Salva seu caminho de músicas e navegador preferido localmente em `.config_local.json` (ignorado pelo Git).
+- **Detecção de HD Externo e Montagem:** Verifica se o seu HD externo ou partição secundária está montado antes de iniciar.
 
 ## 🛠️ 1. Pré-requisitos (Instalar apenas 1 vez no PC)
 
@@ -48,9 +49,8 @@ Script em Python (compatível com **Linux**, **Windows** e **macOS**) que varre 
 
 ## ▶️ 3. Como Executar no Dia a Dia
 
-1. Certifique-se de estar logado na sua conta do YouTube no seu navegador (Chrome, Firefox, Safari, etc.).
-2. Crie uma pasta com o nome da banda dentro da sua pasta de músicas (ex: .../music/Rammstein).
-3. Abra o terminal na pasta Music-Sync e rode:
+1. Crie uma pasta com o nome da banda dentro da sua pasta de músicas (ex: .../music/Rammstein).
+2. Abra o terminal na pasta Music-Sync e rode:
 
 - **No Linux / macOS:**
 

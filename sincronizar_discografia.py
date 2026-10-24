@@ -4,6 +4,7 @@ import os
 import re
 import sys
 import unicodedata
+import urllib.request
 from difflib import SequenceMatcher
 from pathlib import Path
 from ytmusicapi import YTMusic
@@ -16,6 +17,8 @@ import yt_dlp
 PASTA_SCRIPT = Path(__file__).parent
 ARQUIVO_COOKIES = PASTA_SCRIPT / "cookies.txt"
 ARQUIVO_CONFIG_LOCAL = PASTA_SCRIPT / ".config_local.json"
+
+EXTENSOES_AUDIO = {".mp3", ".flac", ".m4a", ".ogg", ".opus", ".wav", ".wma"}
 
 
 def carregar_config_local() -> dict:
@@ -83,10 +86,7 @@ def escolher_navegador(navegador_salvo: str) -> str:
 
 
 def obter_config_cookies_navegador(navegador: str) -> tuple | None:
-    """
-    Retorna a tupla de configuração para o yt-dlp (cookiesfrombrowser),
-    detectando automaticamente instalações nativas ou via Flatpak no Linux.
-    """
+    """Detecta instalações nativas ou via Flatpak no Linux."""
     if not navegador or navegador == "nenhum":
         return None
 
@@ -192,9 +192,14 @@ def sanitizar_nome_sistema(nome: str) -> str:
     return nome_limpo.strip('. ')
 
 
-def normalizar_para_comparacao(texto: str) -> str:
+def normalizar_para_comparacao(texto: str, remover_numeros_faixa: bool = False) -> str:
     texto = unicodedata.normalize('NFKD', texto)
     texto = ''.join(c for c in texto if not unicodedata.combining(c)).lower()
+
+    if remover_numeros_faixa:
+        # Remove numeração de faixa no início (ex: "01 - ", "01.", "1-02 ")
+        texto = re.sub(r'^\s*(\d+[\-\.\s_]+)+', '', texto)
+
     texto = re.sub(r'[\(\[\-\s]*(19\d{2}|20\d{2})[\)\]\-\s]*', ' ', texto)
 
     termos_ignorar = [
@@ -235,7 +240,80 @@ def encontrar_pasta_album_local(
     return None
 
 
-def obter_albuns_artista(ytmusic: YTMusic, nome_artista: str) -> list[dict]:
+def faixa_ja_existe_na_pasta(titulo_faixa: str, idx: int, arquivos_audio_locais: list[Path]) -> bool:
+    """
+    Verifica se a música já existe na pasta do álbum mesmo que esteja com outro padrão de nome
+    (ex: 'The Bird of Prey.mp3', '01. The Bird of Prey.flac', '01 - The Bird of Prey.mp3').
+    """
+    alvo_norm = normalizar_para_comparacao(titulo_faixa, remover_numeros_faixa=True)
+    prefixo_num = f"{idx:02d}"
+
+    for arq in arquivos_audio_locais:
+        nome_sem_ext = arq.stem
+        arq_norm = normalizar_para_comparacao(nome_sem_ext, remover_numeros_faixa=True)
+
+        if not arq_norm:
+            continue
+
+        # 1. Nome da faixa bate exatamente após limpar numeração e símbolos
+        if alvo_norm and alvo_norm == arq_norm:
+            return True
+
+        # 2. Nome da faixa está contido no arquivo (ex: arquivo tem 'feat. X' ou nome da banda)
+        if len(alvo_norm) >= 4 and (alvo_norm in arq_norm or arq_norm in alvo_norm):
+            return True
+
+        # 3. Similaridade alta (>= 82%)
+        if alvo_norm and SequenceMatcher(None, alvo_norm, arq_norm).ratio() >= 0.82:
+            return True
+
+        # 4. Começa com o mesmo número de faixa (ex: '01 - ...') e tem alguma semelhança
+        if re.match(rf'^0?{idx}[\s\.\-_]', nome_sem_ext) and SequenceMatcher(None, alvo_norm, arq_norm).ratio() >= 0.55:
+            return True
+
+    return False
+
+
+def melhorar_url_thumbnail(url: str) -> str:
+    """Converte a URL da miniatura do YouTube Music para alta resolução (1000x1000)."""
+    if not url:
+        return ""
+    return re.sub(r'=w\d+-h\d+.*$', '=w1000-h1000-l90-rj', url)
+
+
+def baixar_imagem(thumbnails: list[dict], destino: Path, descricao: str):
+    """Baixa a capa do álbum ou foto do artista caso ainda não exista na pasta."""
+    if destino.exists() or not thumbnails:
+        return
+
+    # Pega a última thumbnail da lista (sempre a de maior resolução)
+    melhor_thumb = thumbnails[-1].get("url", "")
+    url_alta_res = melhorar_url_thumbnail(melhor_thumb)
+    if not url_alta_res:
+        return
+
+    try:
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        req = urllib.request.Request(
+            url_alta_res,
+            headers={'User-Agent': 'Mozilla/5.0'}
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp, open(destino, 'wb') as out_file:
+            out_file.write(resp.read())
+        print(f"  [🖼️] {descricao} salva em: '{destino.name}'")
+    except Exception:
+        # Se falhar na URL modificada, tenta a URL original
+        try:
+            req = urllib.request.Request(melhor_thumb, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=15) as resp, open(destino, 'wb') as out_file:
+                out_file.write(resp.read())
+            print(f"  [🖼️] {descricao} salva em: '{destino.name}'")
+        except Exception:
+            pass
+
+
+def obter_dados_e_albuns_artista(ytmusic: YTMusic, nome_artista: str, pasta_artista: Path) -> list[dict]:
+    """Busca o artista, baixa a foto dele (artist.jpg) e retorna a lista de álbuns."""
     resultados = ytmusic.search(nome_artista, filter="artists", limit=3)
     if not resultados:
         print(f"  [!] Artista '{nome_artista}' não encontrado no YouTube Music.")
@@ -247,6 +325,13 @@ def obter_albuns_artista(ytmusic: YTMusic, nome_artista: str) -> list[dict]:
     print(f"  -> Artista identificado: {nome_oficial} (ID: {browse_id})")
 
     dados_artista = ytmusic.get_artist(browse_id)
+
+    # Baixa a imagem do artista (artist.jpg) se ainda não existir na pasta da banda
+    thumbs_artista = dados_artista.get("thumbnails") or artista_info.get("thumbnails") or []
+    caminho_img_artista = pasta_artista / "artist.jpg"
+    if not caminho_img_artista.exists() and not (pasta_artista / "folder.jpg").exists():
+        baixar_imagem(thumbs_artista, caminho_img_artista, f"Foto de {nome_oficial}")
+
     secao_albuns = dados_artista.get("albums", {})
     if not secao_albuns:
         return []
@@ -265,15 +350,18 @@ def montar_opcoes_ytdlp(
     total_faixas: int,
     ano_album: str,
     navegador_escolhido: str,
-    usar_cookies: bool = True
+    usar_cookies: bool = True,
+    cliente_player: list[str] | None = None
 ) -> dict:
     ydl_opts = {
+        # Formato super flexível para evitar 'Requested format is not available'
         'format': 'bestaudio/best',
         'outtmpl': str(caminho_saida),
         'download_archive': str(arquivo_historico),
         'quiet': True,
         'no_warnings': True,
         'ignoreerrors': True,
+        'writethumbnail': True,
         'sleep_interval': 1,
         'max_sleep_interval': 3,
         'postprocessors': [
@@ -281,6 +369,9 @@ def montar_opcoes_ytdlp(
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
                 'preferredquality': '320',
+            },
+            {
+                'key': 'EmbedThumbnail',
             },
             {
                 'key': 'FFmpegMetadata',
@@ -294,6 +385,9 @@ def montar_opcoes_ytdlp(
             '-metadata', f'date={ano_album}',
         ],
     }
+
+    if cliente_player:
+        ydl_opts['extractor_args'] = {'youtube': {'player_client': cliente_player}}
 
     if usar_cookies:
         if ARQUIVO_COOKIES.exists():
@@ -331,11 +425,34 @@ def baixar_album(
         return
 
     pasta_album.mkdir(parents=True, exist_ok=True)
+
+    # 1. Garante a capa do álbum (cover.jpg) dentro da pasta do álbum
+    thumbs_album = detalhes_album.get("thumbnails") or album_resumo.get("thumbnails") or []
+    caminho_capa = pasta_album / "cover.jpg"
+    if not caminho_capa.exists() and not (pasta_album / "folder.jpg").exists():
+        baixar_imagem(thumbs_album, caminho_capa, f"Capa do álbum '{titulo_album}'")
+
+    # 2. Lista todos os arquivos de áudio que já existem na pasta do álbum
+    arquivos_audio_locais = [
+        f for f in pasta_album.iterdir()
+        if f.is_file() and f.suffix.lower() in EXTENSOES_AUDIO
+    ]
+
+    # Verifica quais faixas realmente faltam usando comparação inteligente
+    faixas_faltantes = []
+    for idx, faixa in enumerate(faixas, start=1):
+        titulo_faixa = faixa.get("title", f"Faixa {idx}")
+        if not faixa_ja_existe_na_pasta(titulo_faixa, idx, arquivos_audio_locais):
+            faixas_faltantes.append((idx, faixa))
+
+    if not faixas_faltantes:
+        print(f"    [✓] Todas as {len(faixas)} faixas (e capa) de '{titulo_album}' já estão na pasta! Pulando...")
+        return
+
+    print(f"    [+] Baixando {len(faixas_faltantes)} faixa(s) faltante(s) de '{titulo_album}' -> {pasta_album.name}")
     arquivo_historico = pasta_album / ".downloaded.txt"
 
-    print(f"    [+] Verificando/Baixando '{titulo_album}' ({len(faixas)} faixas) -> {pasta_album.name}")
-
-    for idx, faixa in enumerate(faixas, start=1):
+    for idx, faixa in faixas_faltantes:
         video_id = faixa.get("videoId")
         titulo_faixa = faixa.get("title", f"Faixa {idx}")
         if not video_id:
@@ -346,16 +463,14 @@ def baixar_album(
         arquivo_mp3_final = pasta_album / f"{nome_arquivo_limpo}.mp3"
         caminho_saida = pasta_album / f"{nome_arquivo_limpo}.%(ext)s"
 
-        if arquivo_mp3_final.exists():
-            continue
-
         url = "https:" + f"//music.youtube.com/watch?v={video_id}"
         print(f"      [↓] Baixando: {nome_arquivo_limpo}...")
 
-        # Tentativa 1: Link oficial com cookies do navegador escolhido
+        # Tentativa 1: Cliente web_music/tv com cookies (evita 'Requested format is not available')
         ydl_opts = montar_opcoes_ytdlp(
             caminho_saida, arquivo_historico, nome_artista, titulo_album,
-            idx, len(faixas), ano_album, navegador_escolhido, usar_cookies=True
+            idx, len(faixas), ano_album, navegador_escolhido,
+            usar_cookies=True, cliente_player=['tv', 'web_music', 'default']
         )
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -363,13 +478,27 @@ def baixar_album(
         except Exception:
             pass
 
-        # Tentativa 2 (Fallback): Busca áudio alternativo mantendo os cookies ativos
+        # Tentativa 2: Sem cookies (usando cliente Android/iOS nativo, caso os cookies restrinjam os formatos)
         if not arquivo_mp3_final.exists():
-            print(f"      [!] Tentando fonte alternativa autenticada para '{titulo_faixa}'...")
+            ydl_opts_sem_cookie = montar_opcoes_ytdlp(
+                caminho_saida, arquivo_historico, nome_artista, titulo_album,
+                idx, len(faixas), ano_album, navegador_escolhido,
+                usar_cookies=False
+            )
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts_sem_cookie) as ydl:
+                    ydl.download([url])
+            except Exception:
+                pass
+
+        # Tentativa 3 (Fallback final): Busca áudio alternativo no YouTube
+        if not arquivo_mp3_final.exists():
+            print(f"      [!] Tentando fonte alternativa para '{titulo_faixa}'...")
             busca_alternativa = f"ytsearch1:{nome_artista} {titulo_faixa} official audio"
             ydl_opts_fallback = montar_opcoes_ytdlp(
                 caminho_saida, arquivo_historico, nome_artista, titulo_album,
-                idx, len(faixas), ano_album, navegador_escolhido, usar_cookies=True
+                idx, len(faixas), ano_album, navegador_escolhido,
+                usar_cookies=True, cliente_player=['tv', 'web']
             )
             try:
                 with yt_dlp.YoutubeDL(ydl_opts_fallback) as ydl:
@@ -399,7 +528,7 @@ def varrer_biblioteca(caminho_raiz: Path, navegador_escolhido: str):
         nome_artista = pasta_artista.name
         print(f"► Banda/Artista: [{nome_artista}]")
 
-        albuns_oficiais = obter_albuns_artista(ytmusic, nome_artista)
+        albuns_oficiais = obter_dados_e_albuns_artista(ytmusic, nome_artista, pasta_artista)
         if not albuns_oficiais:
             print()
             continue
@@ -418,7 +547,7 @@ def varrer_biblioteca(caminho_raiz: Path, navegador_escolhido: str):
             pasta_existente = encontrar_pasta_album_local(titulo_oficial, pastas_albuns_locais)
 
             if pasta_existente:
-                print(f"  [✓] Álbum '{titulo_oficial}' já existe na pasta: '{pasta_existente.name}'")
+                print(f"  [✓] Álbum '{titulo_oficial}' identificado na pasta: '{pasta_existente.name}'")
                 baixar_album(ytmusic, album, pasta_existente, nome_artista, navegador_escolhido)
             else:
                 nome_nova_pasta = sanitizar_nome_sistema(
@@ -432,7 +561,7 @@ def varrer_biblioteca(caminho_raiz: Path, navegador_escolhido: str):
 
 
 if __name__ == "__main__":
-    print("=== Sincronizador de Discografias (Linux, Windows & macOS) ===")
+    print("=== Sincronizador de Discografias v3.0 (Linux, Windows & macOS) ===")
 
     config = carregar_config_local()
     caminho_salvo = config.get("caminho_musicas", "")
