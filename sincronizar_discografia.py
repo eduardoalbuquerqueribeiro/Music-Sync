@@ -37,7 +37,7 @@ def salvar_config_local(caminho_musicas: str, navegador: str):
 def escolher_navegador(navegador_salvo: str) -> str:
     print("\n🌐 AUTENTICAÇÃO DO YOUTUBE")
     print("   [1] Google Chrome / Brave / Chromium (Via cookies.txt se houver)")
-    print("   [2] Sem navegador (Clientes padrão do yt-dlp)")
+    print("   [2] Sem navegador (Modo padrão)")
     escolha = input("\nEscolha [1-2] (Padrão: 1): ").strip()
     return "chrome" if escolha != "2" else "nenhum"
 
@@ -155,8 +155,6 @@ def montar_opcoes_ytdlp(caminho_saida: Path, arquivo_historico: Path, nome_artis
         'writethumbnail': True,
         'sleep_interval': 1,
         'max_sleep_interval': 3,
-        # Força o cliente android para contornar restrições de formato do YouTube Music
-        'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
         'postprocessors': [
             {'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '320'},
             {'key': 'EmbedThumbnail'},
@@ -208,20 +206,18 @@ def baixar_album(ytmusic: YTMusic, album_resumo: dict, pasta_album: Path, nome_a
     arquivo_historico = pasta_album / ".downloaded.txt"
 
     for idx, faixa in faixas_faltantes:
-        video_id = faixa.get("videoId")
         titulo_faixa = faixa.get("title", f"Faixa {idx}")
-        if not video_id:
-            continue
-
         nome_arq = sanitizar_nome_sistema(f"{idx:02d} - {titulo_faixa}")
         caminho_saida = pasta_album / f"{nome_arq}.%(ext)s"
-        url = f"https://music.youtube.com/watch?v={video_id}"
+        
+        # Estratégia infalível: Busca textual direta pelo ytsearch do yt-dlp
+        termo_busca = f"ytsearch1:{nome_artista} - {titulo_faixa} official audio"
         print(f"      [↓] Baixando: {nome_arq}...")
 
         ydl_opts = montar_opcoes_ytdlp(caminho_saida, arquivo_historico, nome_artista, titulo_album, idx, len(faixas), ano_album)
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
+                ydl.download([termo_busca])
         except Exception:
             pass
 
@@ -263,7 +259,7 @@ def varrer_biblioteca(caminho_raiz: Path):
 
 
 if __name__ == "__main__":
-    print("=== Sincronizador v3.6 (Android Client Bypass) ===")
+    print("=== Sincronizador v4.0 (Smart ytsearch Bypass) ===")
     config = carregar_config_local()
     nav = escolher_navegador(config.get("navegador_cookies", ""))
     caminho = config.get("caminho_musicas", "") or input("\nCaminho da pasta de músicas: ").strip()
