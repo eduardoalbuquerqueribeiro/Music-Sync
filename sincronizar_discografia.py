@@ -63,6 +63,8 @@ def baixar_faixa_cli(termo_busca: str, caminho_saida: Path, arquivo_historico: P
         "--add-metadata",
         "--force-ipv4",
         "--no-playlist",
+        # Força o cliente Android para evitar bloqueios de assinatura de player do YouTube
+        "--extractor-args", "youtube:player_client=android",
         "--output", str(caminho_saida),
         "--download-archive", str(arquivo_historico),
     ]
@@ -70,7 +72,6 @@ def baixar_faixa_cli(termo_busca: str, caminho_saida: Path, arquivo_historico: P
     if ARQUIVO_COOKIES.exists():
         cmd.extend(["--cookies", str(ARQUIVO_COOKIES)])
 
-    # Injeção limpa de metadados sem falhas de string vazia
     cmd.extend([
         "--metadata-from-title", "%(artist)s - %(title)s",
         "--add-metadata",
@@ -91,7 +92,7 @@ def varrer_biblioteca(caminho_raiz: Path):
     total_artistas = len(pastas_artistas)
     total_albuns_geral = sum(len([p for p in art.iterdir() if p.is_dir() and not p.name.startswith('.')]) for art in pastas_artistas)
     
-    print(f"=== Sincronizador v3.0 (JS Challenge Solver Enabled) ===")
+    print(f"=== Sincronizador v3.1 (Android Client Bypass Enabled) ===")
     print(f"📊 Total encontrado: {total_artistas} artistas | {total_albuns_geral} álbuns/pastas.\n")
 
     album_contador = 0
@@ -118,7 +119,8 @@ def varrer_biblioteca(caminho_raiz: Path):
             print(f"  [{album_contador}/{total_albuns_geral}] 📥 Baixando faltando em: {titulo_album} ({len(arquivos_locais)} arquivos locais)")
             arquivo_historico = pasta_album / ".downloaded.txt"
 
-            termo_busca = f"ytsearch10:{nome_artista} {titulo_album} full album audio"
+            # Busca mais precisa focada em áudio oficial
+            termo_busca = f"ytsearch5:{nome_artista} {titulo_album} audio"
             caminho_saida = pasta_album / "%(autonumber)s - %(title)s.%(ext)s"
             baixar_faixa_cli(termo_busca, caminho_saida, arquivo_historico, nome_artista, titulo_album)
 
