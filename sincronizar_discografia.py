@@ -113,7 +113,7 @@ def baixar_imagem(thumbnails: list[dict], destino: Path, descricao: str):
         return
     try:
         destino.parent.mkdir(parents=True, exist_ok=True)
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
         with urllib.request.urlopen(req, timeout=10) as resp, open(destino, 'wb') as out_file:
             out_file.write(resp.read())
         print(f"  [🖼️] {descricao} salva em: '{destino.name}'")
@@ -143,7 +143,8 @@ def obter_dados_e_albuns_artista(ytmusic: YTMusic, nome_artista: str, pasta_arti
         if secao_albuns.get("browseId") and secao_albuns.get("params"):
             return ytmusic.get_artist_albums(secao_albuns["browseId"], secao_albuns["params"])
         return secao_albuns.get("results", [])
-    except Exception:
+    except Exception as e:
+        print(f"  [!] Erro ao buscar artista '{nome_artista}': {e}")
         return []
 
 
@@ -196,6 +197,7 @@ def baixar_album(ytmusic: YTMusic, album_resumo: dict, pasta_album: Path, nome_a
             'no_warnings': True,
             'ignoreerrors': True,
             'writethumbnail': True,
+            'force_ipv4': True,  # Força IPv4 para evitar bloqueios de socket de provedor
             'impersonate': 'chrome',
             'postprocessors': [
                 {'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '320'},
@@ -217,7 +219,7 @@ def baixar_album(ytmusic: YTMusic, album_resumo: dict, pasta_album: Path, nome_a
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([alvo_download])
         except Exception as e:
-            print(f"      [❌] Falha ao baixar '{titulo_faixa}': {e}")
+            print(f"      [❌] Falha ao baixar '{titulo_faixa}': {type(e).__name__} - {e}")
 
 
 def varrer_biblioteca(caminho_raiz: Path):
@@ -257,7 +259,7 @@ def varrer_biblioteca(caminho_raiz: Path):
 
 
 if __name__ == "__main__":
-    print("=== Sincronizador v4.2 (Detailed Exception Logging) ===")
+    print("=== Sincronizador v5.0 (Force IPv4 & Detailed Error Output) ===")
     config = carregar_config_local()
     nav = escolher_navegador(config.get("navegador_cookies", ""))
     caminho = config.get("caminho_musicas", "") or input("\nCaminho da pasta de músicas: ").strip()
