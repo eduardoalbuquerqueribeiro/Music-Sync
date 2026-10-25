@@ -13,11 +13,17 @@ PASTA_SCRIPT = Path(__file__).parent
 ARQUIVO_CONFIG_LOCAL = PASTA_SCRIPT / ".config_local.json"
 EXTENSOES_AUDIO = {".mp3", ".flac", ".m4a", ".ogg", ".opus", ".wav", ".wma"}
 
-# Expressão regular para identificar e purgar arquivos de karaokê, covers amadores e lixo sonoro
+# Expressão regular cirúrgica: foca unicamente em spam amador do YouTube,
+# preservando álbuns como 'Under Cover', faixas bônus de estúdio e covers oficiais gravados por bandas.
 REGEX_LIXO_SONORO = re.compile(
-    r'(?i)(full[\s_-]?album|album[\s_-]?completo|fullset|full[\s_-]?set|karaoke|in the style of|'
-    r'tribute|backing track|vocal demo|lead vocal|drum cover|guitar cover|bass cover|'
-    r'piano cover|acoustic cover|\bcover\b|slowed|reverb|nightcore|reaction|tutorial|how to play)'
+    r'(?i)('
+    r'full[\s_-]?album|album[\s_-]?completo|fullset|full[\s_-]?set|'
+    r'karaoke\s+version|karaoke\s+instrumental|playkaraoke|sing\s+along|karaoke\s+playback|\bkaraoke\b|'
+    r'in\s+the\s+style\s+of|originally\s+performed\s+by|a\s+tribute\s+to|made\s+popular\s+by|'
+    r'first\s+time\s+hearing|\breaction\b|guitar\s+lesson|drum\s+lesson|how\s+to\s+play|tabs\s+pre\s+chorus|'
+    r'#cover|#musica|#karaoke|'
+    r'slowed[\s\+_-]+reverb|slowed[\s\+_-]+and[\s\+_-]+reverb|nightcore|\(\s*slowed\s*\)'
+    r')'
 )
 
 
@@ -63,7 +69,7 @@ def sanitizar_nome_sistema(nome: str) -> str:
 
 
 def limpar_arquivos_indesejados(caminho_raiz: Path):
-    print("🧹 [FASE 1] Faxina geral: Procurando full albums, karaokês, covers e tributos...")
+    print("🧹 [FASE 1] Faxina cirúrgica: Buscando exclusivamente arquivos de spam do YouTube...")
     removidos = 0
     for caminho_arquivo in caminho_raiz.rglob("*"):
         if caminho_arquivo.is_file() and (caminho_arquivo.suffix.lower() in EXTENSOES_AUDIO or caminho_arquivo.suffix.lower() == ".lrc"):
@@ -72,15 +78,14 @@ def limpar_arquivos_indesejados(caminho_raiz: Path):
             if REGEX_LIXO_SONORO.search(nome_arq):
                 try:
                     caminho_arquivo.unlink()
-                    # Apaga também o .lrc se existir
                     lrc_par = caminho_arquivo.with_suffix(".lrc")
                     if lrc_par.exists():
                         lrc_par.unlink()
-                    print(f"  [🗑️ Apagado lixo] {caminho_arquivo.relative_to(caminho_raiz)}")
+                    print(f"  [🗑️ Apagado spam] {caminho_arquivo.relative_to(caminho_raiz)}")
                     removidos += 1
                 except Exception:
                     pass
-    print(f"🧹 Faxina concluída! Total de arquivos indesejados removidos: {removidos}\n")
+    print(f"🧹 Faxina concluída! Total de arquivos de spam removidos: {removidos}\n")
 
 
 def baixar_capa_album(thumbnails: list[dict], pasta_album: Path):
@@ -113,7 +118,7 @@ def baixar_letra_lrc(caminho_musica: Path, artista: str, titulo: str, album: str
 
     cmd = [
         "curl", "-s", "--max-time", "6",
-        "-H", "User-Agent: MusicSync/3.8",
+        "-H", "User-Agent: MusicSync/3.9",
         "-G", "https://lrclib.net/api/get",
         "--data-urlencode", f"artist_name={artista}",
         "--data-urlencode", f"track_name={titulo_limpo}",
@@ -134,7 +139,7 @@ def baixar_letra_lrc(caminho_musica: Path, artista: str, titulo: str, album: str
     if not conteudo_letra:
         cmd_search = [
             "curl", "-s", "--max-time", "6",
-            "-H", "User-Agent: MusicSync/3.8",
+            "-H", "User-Agent: MusicSync/3.9",
             "-G", "https://lrclib.net/api/search",
             "--data-urlencode", f"q={artista} {titulo_limpo}",
         ]
@@ -157,10 +162,10 @@ def baixar_letra_lrc(caminho_musica: Path, artista: str, titulo: str, album: str
 
 
 def baixar_faixa_cli(termo_busca: str, caminho_saida: Path, arquivo_historico: Path, nome_artista: str, titulo_album: str) -> bool:
-    # Filtro anti-lixo severo: bloqueia karaokê, covers, tributos, tutorias e lives
+    # Filtro focado em spam real (sem barrar 'cover' ou 'backing track')
     filtro_match = (
         "duration < 900 & !is_live & "
-        "title !~* '(?i)(karaoke|in the style of|tribute|cover|instrumental|backing track|lesson|tutorial|reaction|parody|slowed|reverb|nightcore)'"
+        "title !~* '(?i)(karaoke|in the style of|originally performed by|a tribute to|how to play|guitar lesson|drum lesson|first time hearing|reaction|slowed|nightcore)'"
     )
 
     cmd = [
@@ -178,7 +183,6 @@ def baixar_faixa_cli(termo_busca: str, caminho_saida: Path, arquivo_historico: P
         "--download-archive", str(arquivo_historico),
     ]
 
-    # Injeção direta de artista e álbum nas tags sem quebrar caso o título venha sem hífen
     cmd.extend([
         "--parse-metadata", f":(?P<artist>{nome_artista})",
         "--parse-metadata", f":(?P<album>{titulo_album})",
@@ -220,7 +224,6 @@ def varrer_biblioteca(caminho_raiz: Path):
     if not verificar_armazenamento(caminho_raiz):
         return
 
-    # Executa a limpeza retroativa antes de qualquer download
     limpar_arquivos_indesejados(caminho_raiz)
 
     try:
@@ -231,7 +234,7 @@ def varrer_biblioteca(caminho_raiz: Path):
     pastas_artistas = sorted([p for p in caminho_raiz.iterdir() if p.is_dir() and not p.name.startswith('.') and p.name.lower() != 'lost+found'])
 
     total_artistas = len(pastas_artistas)
-    print(f"=== [FASE 2] Sincronizador v3.8 (Original Masters Only & Anti-Karaoke) ===")
+    print(f"=== [FASE 2] Sincronizador v3.9 (Safe Album Preservation & Official Audio) ===")
     print(f"📊 Total de artistas encontrados: {total_artistas}\n")
 
     for idx_art, pasta_artista in enumerate(pastas_artistas, start=1):
@@ -269,6 +272,7 @@ def varrer_biblioteca(caminho_raiz: Path):
             titulo_album = pasta_album.name
             arquivos_locais = [f for f in pasta_album.iterdir() if f.is_file() and f.suffix.lower() in EXTENSOES_AUDIO]
             
+            # Se a pasta já contém músicas suficientes, só assegura as letras
             if len(arquivos_locais) >= 3:
                 sincronizar_letras_pasta(pasta_album, nome_artista, titulo_album)
                 continue
@@ -294,8 +298,8 @@ def varrer_biblioteca(caminho_raiz: Path):
                                 nome_arq = sanitizar_nome_sistema(f"{i:02d} - {t_nome}")
                                 caminho_saida = pasta_album / f"{nome_arq}.%(ext)s"
                                 
-                                # Busca direcionada para a master oficial do artista (Topic channel)
-                                termo_faixa = f"ytsearch2:\"{nome_artista} - Topic\" \"{t_nome}\" audio -karaoke -cover -tribute"
+                                # Busca direcionada via Topic oficial (sem banir a palavra 'cover')
+                                termo_faixa = f"ytsearch2:\"{nome_artista} - Topic\" \"{t_nome}\" audio -karaoke -tribute"
                                 
                                 baixar_faixa_cli(termo_faixa, caminho_saida, arquivo_historico, nome_artista, titulo_album)
                                 
@@ -310,9 +314,8 @@ def varrer_biblioteca(caminho_raiz: Path):
                     pass
 
             if not faixas_baixadas:
-                print(f"    [+] Buscando masters originais para '{titulo_album}'...")
-                # Força a busca por canais Topic oficiais ou áudios com selo da gravadora
-                termo_busca = f"ytsearch10:\"{nome_artista}\" \"{titulo_album}\" \"Provided to YouTube\" -karaoke -cover -tribute"
+                print(f"    [+] Buscando masters oficiais para '{titulo_album}'...")
+                termo_busca = f"ytsearch10:\"{nome_artista}\" \"{titulo_album}\" \"Provided to YouTube\" -karaoke -tribute"
                 caminho_saida = pasta_album / "%(autonumber)s - %(title)s.%(ext)s"
                 baixar_faixa_cli(termo_busca, caminho_saida, arquivo_historico, nome_artista, titulo_album)
 
@@ -320,7 +323,7 @@ def varrer_biblioteca(caminho_raiz: Path):
 
         print("-" * 60)
 
-    print("\n✨ Varredura concluída! Somente masters originais de estúdio na biblioteca!")
+    print("\n✨ Varredura concluída! Discografias e álbuns originais preservados com sucesso!")
 
 
 if __name__ == "__main__":
