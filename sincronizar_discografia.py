@@ -13,6 +13,13 @@ PASTA_SCRIPT = Path(__file__).parent
 ARQUIVO_CONFIG_LOCAL = PASTA_SCRIPT / ".config_local.json"
 EXTENSOES_AUDIO = {".mp3", ".flac", ".m4a", ".ogg", ".opus", ".wav", ".wma"}
 
+# Expressão regular para identificar e purgar arquivos de karaokê, covers amadores e lixo sonoro
+REGEX_LIXO_SONORO = re.compile(
+    r'(?i)(full[\s_-]?album|album[\s_-]?completo|fullset|full[\s_-]?set|karaoke|in the style of|'
+    r'tribute|backing track|vocal demo|lead vocal|drum cover|guitar cover|bass cover|'
+    r'piano cover|acoustic cover|\bcover\b|slowed|reverb|nightcore|reaction|tutorial|how to play)'
+)
+
 
 def carregar_config_local() -> dict:
     if ARQUIVO_CONFIG_LOCAL.exists():
@@ -36,7 +43,6 @@ def verificar_dependencias():
     for cmd in ["yt-dlp", "ffmpeg", "curl"]:
         if not shutil.which(cmd):
             print(f"[❌] Erro crítico: A ferramenta '{cmd}' não foi encontrada no PATH do sistema.")
-            print(f"     Instale com seu gerenciador de pacotes (ex: sudo dnf install {cmd}).")
             sys.exit(1)
 
 
@@ -56,21 +62,25 @@ def sanitizar_nome_sistema(nome: str) -> str:
     return re.sub(r'[<>:"/\\|?*]', '-', nome).strip('. ')
 
 
-def limpar_arquivos_full_album(caminho_raiz: Path):
-    print("🧹 [FASE 1] Varrendo biblioteca em busca de arquivos indesejados 'full album'...")
+def limpar_arquivos_indesejados(caminho_raiz: Path):
+    print("🧹 [FASE 1] Faxina geral: Procurando full albums, karaokês, covers e tributos...")
     removidos = 0
     for caminho_arquivo in caminho_raiz.rglob("*"):
-        if caminho_arquivo.is_file() and caminho_arquivo.suffix.lower() in EXTENSOES_AUDIO:
-            nome_arq_lower = caminho_arquivo.name.lower()
-            padroes_proibidos = ["full album", "full_album", "album completo", "full-album", "fullset", "full set"]
-            if any(p in nome_arq_lower for p in padroes_proibidos):
+        if caminho_arquivo.is_file() and (caminho_arquivo.suffix.lower() in EXTENSOES_AUDIO or caminho_arquivo.suffix.lower() == ".lrc"):
+            nome_arq = caminho_arquivo.name
+            
+            if REGEX_LIXO_SONORO.search(nome_arq):
                 try:
                     caminho_arquivo.unlink()
-                    print(f"  [🗑️ Apagado] {caminho_arquivo.relative_to(caminho_raiz)}")
+                    # Apaga também o .lrc se existir
+                    lrc_par = caminho_arquivo.with_suffix(".lrc")
+                    if lrc_par.exists():
+                        lrc_par.unlink()
+                    print(f"  [🗑️ Apagado lixo] {caminho_arquivo.relative_to(caminho_raiz)}")
                     removidos += 1
                 except Exception:
                     pass
-    print(f"🧹 Faxina concluída! Total de arquivos removidos: {removidos}\n")
+    print(f"🧹 Faxina concluída! Total de arquivos indesejados removidos: {removidos}\n")
 
 
 def baixar_capa_album(thumbnails: list[dict], pasta_album: Path):
@@ -94,19 +104,16 @@ def baixar_capa_album(thumbnails: list[dict], pasta_album: Path):
 
 
 def baixar_letra_lrc(caminho_musica: Path, artista: str, titulo: str, album: str = ""):
-    """Busca letra sincronizada (.lrc) no LRCLIB usando curl para máxima confiabilidade."""
     caminho_lrc = caminho_musica.with_suffix(".lrc")
     if caminho_lrc.exists():
         return
 
-    # Limpa nomes para melhorar a taxa de acerto na API
     titulo_limpo = re.sub(r'^\d+[\s\.\-_]+', '', titulo).strip()
     titulo_limpo = re.sub(r'[\(\[\-].*?(feat|ft|remaster|version|edition).*?[\)\]]', '', titulo_limpo, flags=re.IGNORECASE).strip()
 
-    # Tentativa 1: Busca exata
     cmd = [
         "curl", "-s", "--max-time", "6",
-        "-H", "User-Agent: MusicSync/3.7",
+        "-H", "User-Agent: MusicSync/3.8",
         "-G", "https://lrclib.net/api/get",
         "--data-urlencode", f"artist_name={artista}",
         "--data-urlencode", f"track_name={titulo_limpo}",
@@ -124,11 +131,10 @@ def baixar_letra_lrc(caminho_musica: Path, artista: str, titulo: str, album: str
         except Exception:
             pass
 
-    # Tentativa 2: Busca por query genérica caso a busca estrita não retorne
     if not conteudo_letra:
         cmd_search = [
             "curl", "-s", "--max-time", "6",
-            "-H", "User-Agent: MusicSync/3.7",
+            "-H", "User-Agent: MusicSync/3.8",
             "-G", "https://lrclib.net/api/search",
             "--data-urlencode", f"q={artista} {titulo_limpo}",
         ]
@@ -151,6 +157,12 @@ def baixar_letra_lrc(caminho_musica: Path, artista: str, titulo: str, album: str
 
 
 def baixar_faixa_cli(termo_busca: str, caminho_saida: Path, arquivo_historico: Path, nome_artista: str, titulo_album: str) -> bool:
+    # Filtro anti-lixo severo: bloqueia karaokê, covers, tributos, tutorias e lives
+    filtro_match = (
+        "duration < 900 & !is_live & "
+        "title !~* '(?i)(karaoke|in the style of|tribute|cover|instrumental|backing track|lesson|tutorial|reaction|parody|slowed|reverb|nightcore)'"
+    )
+
     cmd = [
         "yt-dlp",
         "--extract-audio",
@@ -160,15 +172,16 @@ def baixar_faixa_cli(termo_busca: str, caminho_saida: Path, arquivo_historico: P
         "--add-metadata",
         "--force-ipv4",
         "--no-playlist",
-        "--match-filter", "duration < 900 & !is_live",
+        "--match-filter", filtro_match,
         "--extractor-args", "youtube:player_client=android",
         "--output", str(caminho_saida),
         "--download-archive", str(arquivo_historico),
     ]
 
+    # Injeção direta de artista e álbum nas tags sem quebrar caso o título venha sem hífen
     cmd.extend([
-        "--metadata-from-title", "%(artist)s - %(title)s",
-        "--add-metadata",
+        "--parse-metadata", f":(?P<artist>{nome_artista})",
+        "--parse-metadata", f":(?P<album>{titulo_album})",
     ])
 
     cmd.append(termo_busca)
@@ -196,7 +209,6 @@ def obter_todos_lancamentos_artista(ytmusic: YTMusic, browse_id: str) -> list[di
 
 
 def sincronizar_letras_pasta(pasta_album: Path, nome_artista: str, titulo_album: str):
-    """Garante que todas as músicas locais tenham seus arquivos .lrc correspondentes."""
     for arq in pasta_album.iterdir():
         if arq.is_file() and arq.suffix.lower() in EXTENSOES_AUDIO:
             if not arq.with_suffix(".lrc").exists():
@@ -208,7 +220,8 @@ def varrer_biblioteca(caminho_raiz: Path):
     if not verificar_armazenamento(caminho_raiz):
         return
 
-    limpar_arquivos_full_album(caminho_raiz)
+    # Executa a limpeza retroativa antes de qualquer download
+    limpar_arquivos_indesejados(caminho_raiz)
 
     try:
         ytmusic = YTMusic()
@@ -218,7 +231,7 @@ def varrer_biblioteca(caminho_raiz: Path):
     pastas_artistas = sorted([p for p in caminho_raiz.iterdir() if p.is_dir() and not p.name.startswith('.') and p.name.lower() != 'lost+found'])
 
     total_artistas = len(pastas_artistas)
-    print(f"=== [FASE 2] Sincronizador v3.7 (Multiplataforma + .LRC Lyrics Engine) ===")
+    print(f"=== [FASE 2] Sincronizador v3.8 (Original Masters Only & Anti-Karaoke) ===")
     print(f"📊 Total de artistas encontrados: {total_artistas}\n")
 
     for idx_art, pasta_artista in enumerate(pastas_artistas, start=1):
@@ -256,7 +269,6 @@ def varrer_biblioteca(caminho_raiz: Path):
             titulo_album = pasta_album.name
             arquivos_locais = [f for f in pasta_album.iterdir() if f.is_file() and f.suffix.lower() in EXTENSOES_AUDIO]
             
-            # Se a pasta já está preenchida com áudio, checa se falta alguma letra .lrc
             if len(arquivos_locais) >= 3:
                 sincronizar_letras_pasta(pasta_album, nome_artista, titulo_album)
                 continue
@@ -276,16 +288,17 @@ def varrer_biblioteca(caminho_raiz: Path):
 
                         tracks = detalhes.get("tracks", [])
                         if tracks:
-                            print(f"    [i] Tracklist oficial encontrada ({len(tracks)} faixas). Baixando separadamente...")
+                            print(f"    [i] Tracklist oficial encontrada ({len(tracks)} faixas). Baixando estúdio oficial...")
                             for i, t in enumerate(tracks, start=1):
                                 t_nome = t.get("title", "")
                                 nome_arq = sanitizar_nome_sistema(f"{i:02d} - {t_nome}")
                                 caminho_saida = pasta_album / f"{nome_arq}.%(ext)s"
-                                termo_faixa = f"ytsearch1:{nome_artista} {titulo_album} {t_nome} audio -full -album -live"
                                 
-                                ok = baixar_faixa_cli(termo_faixa, caminho_saida, arquivo_historico, nome_artista, titulo_album)
+                                # Busca direcionada para a master oficial do artista (Topic channel)
+                                termo_faixa = f"ytsearch2:\"{nome_artista} - Topic\" \"{t_nome}\" audio -karaoke -cover -tribute"
                                 
-                                # Tenta buscar a letra logo após o download da música
+                                baixar_faixa_cli(termo_faixa, caminho_saida, arquivo_historico, nome_artista, titulo_album)
+                                
                                 for extensao in EXTENSOES_AUDIO:
                                     arq_gerado = pasta_album / f"{nome_arq}{extensao}"
                                     if arq_gerado.exists():
@@ -297,17 +310,17 @@ def varrer_biblioteca(caminho_raiz: Path):
                     pass
 
             if not faixas_baixadas:
-                print(f"    [+] Buscando faixas avulsas para '{titulo_album}'...")
-                termo_busca = f"ytsearch12:{nome_artista} {titulo_album} song audio -full -album -live"
+                print(f"    [+] Buscando masters originais para '{titulo_album}'...")
+                # Força a busca por canais Topic oficiais ou áudios com selo da gravadora
+                termo_busca = f"ytsearch10:\"{nome_artista}\" \"{titulo_album}\" \"Provided to YouTube\" -karaoke -cover -tribute"
                 caminho_saida = pasta_album / "%(autonumber)s - %(title)s.%(ext)s"
                 baixar_faixa_cli(termo_busca, caminho_saida, arquivo_historico, nome_artista, titulo_album)
 
-            # Varredura final de letras para garantir que tudo na pasta receba seu .lrc
             sincronizar_letras_pasta(pasta_album, nome_artista, titulo_album)
 
         print("-" * 60)
 
-    print("\n✨ Varredura, Download de Capas, Letras (.LRC) e Áudios concluídos com sucesso!")
+    print("\n✨ Varredura concluída! Somente masters originais de estúdio na biblioteca!")
 
 
 if __name__ == "__main__":
