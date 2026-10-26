@@ -1,8 +1,7 @@
 venv/
-.venv/
 __pycache__/
 *.pyc
-cookies.txt
 .config_local.json
-*.mp3
+cookies.txt
+*.log
 .downloaded.txt
